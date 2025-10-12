@@ -1,72 +1,69 @@
 import os
-import requests
 import pandas as pd
+import requests
+from io import StringIO
 
-# === НАСТРОЙКИ ===
-TICKERS = ["LQDT", "GOLD", "OBLG", "EQMX"]
+# === Настройки ===
+TICKERS = {
+    "LQDT": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=LQDT",
+    "GOLD": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=GOLD",
+    "OBLG": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=OBLG",
+    "EQMX": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=EQMX"
+}
+
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-def fetch_history(ticker, last_date=None):
-    print(f"\n🔹 Обрабатываем {ticker}...")
-
-    url = f"https://iss.moex.com/iss/history/engines/funds/markets/fundsecurities/securities/{ticker}.json"
-    params = {
-        "iss.meta": "off",
-        "iss.only": "history"
-    }
-    if last_date:
-        params["from"] = last_date
-
-    r = requests.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"})
-    print(f"🌐 URL запроса: {r.url}")
-    print(f"HTTP статус: {r.status_code}")
-    print(f"Первые 500 символов ответа:\n{r.text[:500]}")
-
-    try:
-        json_data = r.json()
-    except ValueError:
-        print(f"❌ Не удалось преобразовать ответ в JSON для {ticker}")
+def fetch_csv(url):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(url, headers=headers)
+    if r.status_code != 200:
+        print(f"❌ Ошибка загрузки {url} (HTTP {r.status_code})")
         return None
-
-    history = json_data.get("history", {})
-    columns = history.get("columns", [])
-    data = history.get("data", [])
-
-    if not data:
-        print(f"⚠ Пустой массив данных для {ticker}")
-        return None
-
-    df = pd.DataFrame(data, columns=columns)
-    # Приведём дату к типу datetime
-    if "TRADEDATE" in df.columns:
-        df["TRADEDATE"] = pd.to_datetime(df["TRADEDATE"])
+    # Конвертируем в DataFrame
+    df = pd.read_csv(StringIO(r.text), sep=";", decimal=",")
     return df
 
-# === ГЛАВНАЯ ЛОГИКА ===
-for ticker in TICKERS:
-    file_path = os.path.join(DATA_DIR, f"{ticker}.csv")
-    last_date = None
+def process_df(df, ticker):
+    # Проверяем нужные колонки
+    columns_map = {
+        "TRADEDATE": "Date",
+        "CLOSE": "Close",
+        "OPEN": "Open",
+        "HIGH": "High",
+        "LOW": "Low",
+        "VALUE": "Volume",
+        "CHANGE": "PctChange"
+    }
+    df = df.rename(columns=columns_map)
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], format="%d.%m.%Y")
+        df.sort_values("Date", inplace=True)
+    return df
 
-    if os.path.exists(file_path):
-        df_existing = pd.read_csv(file_path)
-        if "TRADEDATE" in df_existing.columns:
-            last_date = df_existing["TRADEDATE"].max()
-            print(f"📅 Последняя дата в {ticker}.csv: {last_date}")
+# === Основной цикл ===
+for ticker, url in TICKERS.items():
+    print(f"\n🔹 Обрабатываем {ticker}...")
 
-    df_new = fetch_history(ticker, last_date)
-
+    df_new = fetch_csv(url)
     if df_new is None:
-        print(f"⚠ Нет новых данных для {ticker}, пропускаем сохранение.")
+        print(f"⚠ Не удалось загрузить CSV для {ticker}")
         continue
 
-    if os.path.exists(file_path):
-        df_existing = pd.read_csv(file_path)
-        df_merged = pd.concat([df_existing, df_new]).drop_duplicates(subset=["TRADEDATE"]).sort_values("TRADEDATE")
-    else:
-        df_merged = df_new.sort_values("TRADEDATE")
+    df_new = process_df(df_new, ticker)
 
-    df_merged.to_csv(file_path, index=False)
-    print(f"💾 Сохранено {len(df_merged)} строк → {file_path}")
+    file_path = os.path.join(DATA_DIR, f"{ticker}.csv")
+
+    # Если файл существует — объединяем с новыми данными
+    if os.path.exists(file_path):
+        df_existing = pd.read_csv(file_path, parse_dates=["Date"])
+        df_combined = pd.concat([df_existing, df_new])
+        df_combined.drop_duplicates(subset=["Date"], inplace=True)
+        df_combined.sort_values("Date", inplace=True)
+    else:
+        df_combined = df_new
+
+    df_combined.to_csv(file_path, index=False)
+    print(f"💾 Сохранено {len(df_combined)} строк → {file_path}")
 
 print("\n✅ Все тикеры обработаны!")
