@@ -1,0 +1,33 @@
+name: Daily MOEX Funds Update
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # каждый день в 08:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install pandas requests
+
+    - name: Run fetch_and_update.py
+      run: python fetch_and_update.py
+
+    - name: Commit and push changes
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add data/*.csv
+        git commit -m "Daily update $(date +'%Y-%m-%d')" || echo "No changes to commit"
+        git push
