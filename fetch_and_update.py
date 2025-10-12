@@ -19,10 +19,20 @@ for ticker, filename in tickers.items():
     print(f"🔹 Обрабатываем {ticker}...")
 
     # Получаем исторические данные с MOEX ISS API
-    url = f"https://iss.moex.com/iss/history/engines/funds/markets/fundsecurities/securities/{ticker}.json"
-    r = requests.get(url)
-    if r.status_code != 200:
-        print(f"Ошибка при получении данных для {ticker}: {r.status_code}")
+    url = f"https://iss.moex.com/iss/history/engines/stock/markets/tqtf/securities/{ticker}.json"
+    params = {
+        "from": last_date,
+        "till": last_date,
+        "iss.meta": "off",
+        "iss.only": "history"
+    }
+    
+    r = requests.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"})
+    
+    try:
+        json_data = r.json()
+    except ValueError:
+        print(f"❌ Не удалось получить JSON по {ticker}. Ответ:\n{r.text[:500]}")
         continue
 
     json_data = r.json()
