@@ -1,69 +1,71 @@
-import os
-import pandas as pd
 import requests
-from io import StringIO
+import pandas as pd
+import os
+from datetime import datetime
 
-# === Настройки ===
+# === Настройки тикеров и начальной даты сбора ===
 TICKERS = {
-    "LQDT": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=LQDT",
-    "GOLD": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=GOLD",
-    "OBLG": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=OBLG",
-    "EQMX": "https://www.moex.com/export/derivatives/csv/history.aspx?board=TQTF&code=EQMX"
+    "LQDT": "2022-01-01",
+    "GOLD": "2022-01-01",
+    "OBLG": "2022-12-09",
+    "EQMX": "2022-01-01"
 }
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-def fetch_csv(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(url, headers=headers)
+def fetch_moex_history(ticker, date_from, date_till):
+    url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQTF/securities/{ticker}.xml?from={date_from}&till={date_till}"
+    print(f"\n🔹 URL: {url}")
+
+    r = requests.get(url)
     if r.status_code != 200:
-        print(f"❌ Ошибка загрузки {url} (HTTP {r.status_code})")
+        print(f"⚠ Ошибка запроса для {ticker}: {r.status_code}")
         return None
-    # Конвертируем в DataFrame
-    df = pd.read_csv(StringIO(r.text), sep=";", decimal=",")
-    return df
 
-def process_df(df, ticker):
-    # Проверяем нужные колонки
-    columns_map = {
-        "TRADEDATE": "Date",
-        "CLOSE": "Close",
-        "OPEN": "Open",
-        "HIGH": "High",
-        "LOW": "Low",
-        "VALUE": "Volume",
-        "CHANGE": "PctChange"
-    }
-    df = df.rename(columns=columns_map)
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], format="%d.%m.%Y")
-        df.sort_values("Date", inplace=True)
-    return df
+    try:
+        df = pd.read_xml(r.text)
+        return df
+    except Exception as e:
+        print(f"⚠ Ошибка парсинга XML: {e}")
+        return None
 
-# === Основной цикл ===
-for ticker, url in TICKERS.items():
-    print(f"\n🔹 Обрабатываем {ticker}...")
-
-    df_new = fetch_csv(url)
-    if df_new is None:
-        print(f"⚠ Не удалось загрузить CSV для {ticker}")
-        continue
-
-    df_new = process_df(df_new, ticker)
-
+def update_ticker(ticker, start_date):
     file_path = os.path.join(DATA_DIR, f"{ticker}.csv")
 
-    # Если файл существует — объединяем с новыми данными
+    # Определяем начало загрузки
     if os.path.exists(file_path):
-        df_existing = pd.read_csv(file_path, parse_dates=["Date"])
-        df_combined = pd.concat([df_existing, df_new])
-        df_combined.drop_duplicates(subset=["Date"], inplace=True)
-        df_combined.sort_values("Date", inplace=True)
+        df_old = pd.read_csv(file_path)
+        df_old['TRADEDATE'] = pd.to_datetime(df_old['TRADEDATE'])
+        last_date = df_old['TRADEDATE'].max().strftime("%Y-%m-%d")
+        print(f"📅 Последняя дата в {file_path}: {last_date}")
     else:
-        df_combined = df_new
+        last_date = start_date
+        df_old = pd.DataFrame()
 
-    df_combined.to_csv(file_path, index=False)
-    print(f"💾 Сохранено {len(df_combined)} строк → {file_path}")
+    today = datetime.today().strftime("%Y-%m-%d")
 
-print("\n✅ Все тикеры обработаны!")
+    df_new = fetch_moex_history(ticker, last_date, today)
+
+    if df_new is None or df_new.empty:
+        print(f"⚠ Нет новых данных для {ticker}")
+        return
+
+    # Оставляем только нужные колонки
+    cols = ["TRADEDATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]
+    df_new = df_new[cols]
+
+    # Объединяем с предыдущими данными
+    if not df_old.empty:
+        df_full = pd.concat([df_old, df_new]).drop_duplicates()
+    else:
+        df_full = df_new
+
+    df_full.to_csv(file_path, index=False)
+    print(f"✅ Обновлено: {file_path} — {len(df_full)} строк")
+
+# === Запуск по всем тикерам ===
+if __name__ == "__main__":
+    for ticker, start_date in TICKERS.items():
+        print(f"\n=== Обрабатываем {ticker} ===")
+        update_ticker(ticker, start_date)
