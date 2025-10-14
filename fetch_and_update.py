@@ -44,13 +44,20 @@ def fetch_moex_history_paginated(ticker, date_from, date_till):
                     return pd.DataFrame()
 
         rows = root.findall(".//row")
-        if not rows:
-            break
+        row_count = len(rows)
+
+        if row_count == 0:
+            break  # Больше данных нет
 
         for row in rows:
             all_rows.append(row.attrib)
 
-        print(f"  Получено {len(rows)} строк (start={start})")
+        print(f"  Получено {row_count} строк (start={start})")
+
+        # 🛑 Если меньше 100 строк — это последняя страница
+        if row_count < 100:
+            break
+
         start += 100
 
     if not all_rows:
@@ -61,6 +68,8 @@ def fetch_moex_history_paginated(ticker, date_from, date_till):
     df = df[columns]
     df['TRADEDATE'] = pd.to_datetime(df['TRADEDATE'])
     return df
+
+
 
 def update_ticker(ticker, start_date):
     file_path = os.path.join(DATA_DIR, f"{ticker}.csv")
