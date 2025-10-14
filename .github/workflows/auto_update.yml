@@ -1,17 +1,19 @@
-name: Auto Update MOEX Funds
+name: Auto Update MOEX Datasets
 
 on:
   schedule:
-    - cron: "0 6 * * *"  # Каждый день в 09:00 по Москве (06:00 UTC)
-  workflow_dispatch:      # Возможность запустить вручную
+    - cron: "0 3 * * *"  # каждый день в 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write   # ✅ ВАЖНО: даём права на push
 
 jobs:
   update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -19,12 +21,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install pandas requests
+        run: pip install requests pandas
 
-      - name: Run fetch_and_update
-        run: |
-          python fetch_and_update.py
+      - name: Run update script
+        run: python fetch_moex.py
 
       - name: Commit and push changes
         run: |
@@ -32,4 +32,5 @@ jobs:
           git config --global user.email "actions@github.com"
           git add data/*.csv
           git commit -m "Auto update MOEX fund datasets" || echo "No changes to commit"
-          git push
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
