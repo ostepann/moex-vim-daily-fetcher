@@ -3,7 +3,7 @@ name: Dual Momentum Signal
 on:
   schedule:
     # Ежедневно в 10:00 по UTC (13:00 МСК)
-    - cron: "10 07 * * *"
+    - cron: "05 06 * * *"
   workflow_dispatch:  # позволяет запустить вручную из GitHub UI
 
 jobs:
