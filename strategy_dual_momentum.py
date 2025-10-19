@@ -104,7 +104,8 @@ def get_and_send_signal():
         f"Дата данных: {last_date.strftime('%Y-%m-%d')}",
         f"Рекомендация: вложить 100% в *{selected}*",
         "",
-        "*Моментум (6 мес):*"
+        "*Моментум (*{LOOKBACK}*):*"
+#        "*Моментум (6 мес):*"
     ]
     for a in risk_assets + [risk_free]:
         sign = "🟢" if a == selected else ("🔵" if a in eligible else "⚪️")
