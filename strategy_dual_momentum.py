@@ -104,7 +104,7 @@ def get_and_send_signal():
         f"Дата данных: {last_date.strftime('%Y-%m-%d')}",
         f"Рекомендация: вложить 100% в *{selected}*",
         "",
-        "*Моментум (*{LOOKBACK}*):*"
+        "*Моментум ({LOOKBACK} дн.):*"
 #        "*Моментум (6 мес):*"
     ]
     for a in risk_assets + [risk_free]:
