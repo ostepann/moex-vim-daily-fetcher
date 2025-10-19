@@ -7,8 +7,8 @@ import requests
 DATA_DIR = "data/"  # Папка с CSV в репозитории
 FILES = ["GOLD.csv", "EQMX.csv", "OBLG.csv", "LQDT.csv"]
 ASSETS = ["GOLD", "EQMX", "OBLG", "LQDT"]
-MULTIPLIERS = [0.025, 1, 1, 100]  # GOLD в USD → RUB, LQDT в копейках → рубли
-LOOKBACK = 126  # ~6 месяцев (торговых дней)
+MULTIPLIERS = [50, 1, 1, 100]  # GOLD в USD → RUB, LQDT в копейках → рубли
+LOOKBACK = 2 # 126  # ~6 месяцев (торговых дней)
 
 # --- Telegram (через GitHub Secrets) ---
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
