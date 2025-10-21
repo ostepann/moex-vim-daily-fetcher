@@ -8,7 +8,7 @@ DATA_DIR = "data/"
 FILES = ["GOLD.csv", "EQMX.csv", "OBLG.csv", "LQDT.csv", "RVI.csv"]
 ASSETS = ["GOLD", "EQMX", "OBLG", "LQDT"]
 MULTIPLIERS = [50, 1, 1, 100]  # GOLD: USD → RUB (~50), LQDT: копейки → рубли
-LOOKBACK = 126  # ~6 месяцев (торговых дней)
+LOOKBACK = 2 #126  # ~6 месяцев (торговых дней)
 RVI_THRESHOLD = 30
 
 # --- Telegram ---
