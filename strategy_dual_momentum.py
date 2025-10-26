@@ -12,7 +12,7 @@ RISK_ASSETS = ["GOLD", "EQMX", "OBLG"]
 # --- Пороги ---
 RVI_THRESHOLD = 30
 RSI_OVERBOUGHT = 70
-VOLUME_RATIO_THRESHOLD = 0.8  # текущий объём >= 80% от 10-дневного среднего
+VOLUME_RATIO_THRESHOLD = 0.8
 
 # --- Telegram ---
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -33,7 +33,6 @@ def compute_rsi(series, window=14):
 
 def load_and_prepare_data():
     dfs = {}
-    # Загрузка и подготовка активов
     for asset in ASSETS:
         path = os.path.join(DATA_DIR, f"{asset}.csv")
         if not os.path.exists(path):
@@ -52,7 +51,6 @@ def load_and_prepare_data():
                 )
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # 🔥 Сразу переименовываем колонки под актив
         df = df.rename(columns={
             'OPEN': f'OPEN_{asset}',
             'HIGH': f'HIGH_{asset}',
@@ -62,7 +60,6 @@ def load_and_prepare_data():
         })
         dfs[asset] = df
 
-    # Загрузка RVI
     rvi_path = os.path.join(DATA_DIR, "RVI.csv")
     if not os.path.exists(rvi_path):
         raise FileNotFoundError(f"Файл не найден: {rvi_path}")
@@ -72,7 +69,6 @@ def load_and_prepare_data():
     df_rvi['Close_RVI'] = pd.to_numeric(df_rvi['Close_RVI'], errors='coerce')
     dfs['RVI'] = df_rvi
 
-    # Объединение данных
     df_merged = dfs[ASSETS[0]].copy()
     for asset in ASSETS[1:]:
         df_merged = df_merged.merge(dfs[asset], on='Date', how='inner')
@@ -86,7 +82,7 @@ def load_and_prepare_data():
 
 def send_telegram_message(text: str):
     if not TELEGRAM_ENABLED:
-        print("📤 Telegram не настроен (проверьте секреты)")
+        print("📤 Telegram не настроен")
         return False
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -107,7 +103,7 @@ def get_and_send_signal():
     print("🔍 Загрузка данных...")
     df = load_and_prepare_data()
     if len(df) < 200:
-        msg = f"❌ Недостаточно данных ({len(df)} строк). Нужно ≥200 для индикаторов."
+        msg = f"❌ Недостаточно данных ({len(df)} строк). Нужно ≥200."
         print(msg)
         send_telegram_message(msg)
         return
@@ -116,49 +112,55 @@ def get_and_send_signal():
     last_date = df.index[-1]
     current_rvi = df['Close_RVI'].iloc[-1]
 
-    # --- Адаптивный LOOKBACK ---
+    # --- Адаптивные периоды ---
     if current_rvi > 35:
         LOOKBACK = 10
+        MA_PERIOD = 10
+        RSI_PERIOD = 5
     elif current_rvi > 25:
         LOOKBACK = 21
+        MA_PERIOD = 20
+        RSI_PERIOD = 9
     else:
         LOOKBACK = 42
+        MA_PERIOD = 50
+        RSI_PERIOD = 14
 
-    if len(df) < LOOKBACK + 1:
-        msg = f"❌ Недостаточно данных для LOOKBACK={LOOKBACK}"
+    if len(df) < max(LOOKBACK, MA_PERIOD, RSI_PERIOD) + 1:
+        msg = f"❌ Недостаточно данных для выбранных периодов"
         print(msg)
         send_telegram_message(msg)
         return
 
-    # --- Расчёт моментума ---
+    # --- Моментум ---
     mom = {}
     for asset in RISK_ASSETS + [RISK_FREE]:
         price_today = df[f'CLOSE_{asset}'].iloc[-1]
         price_past = df[f'CLOSE_{asset}'].iloc[-(LOOKBACK + 1)]
         mom[asset] = price_today / price_past - 1
 
-    # --- Расчёт индикаторов ---
+    # --- Индикаторы с адаптивными периодами ---
     for asset in RISK_ASSETS:
-        df[f'MA50_{asset}'] = df[f'CLOSE_{asset}'].rolling(50).mean()
-        df[f'RSI_{asset}'] = compute_rsi(df[f'CLOSE_{asset}'], 14)
+        df[f'MA_{asset}'] = df[f'CLOSE_{asset}'].rolling(MA_PERIOD).mean()
+        df[f'RSI_{asset}'] = compute_rsi(df[f'CLOSE_{asset}'], RSI_PERIOD)
         df[f'VOL_MA10_{asset}'] = df[f'VOLUME_{asset}'].rolling(10).mean()
 
-    # --- Применение фильтров ---
-    filters = {asset: {"MA50": False, "RSI": False, "VOLUME": False} for asset in RISK_ASSETS}
+    # --- Фильтры ---
+    filters = {asset: {"MA": False, "RSI": False, "VOLUME": False} for asset in RISK_ASSETS}
     eligible = []
 
     for asset in RISK_ASSETS:
         price = df[f'CLOSE_{asset}'].iloc[-1]
-        ma50 = df[f'MA50_{asset}'].iloc[-1]
-        rsi = df[f'RSI_{asset}'].iloc[-1]
+        ma_val = df[f'MA_{asset}'].iloc[-1]
+        rsi_val = df[f'RSI_{asset}'].iloc[-1]
         vol_today = df[f'VOLUME_{asset}'].iloc[-1]
         vol_ma10 = df[f'VOL_MA10_{asset}'].iloc[-1]
 
-        ma_ok = price > ma50
-        rsi_ok = rsi < RSI_OVERBOUGHT
+        ma_ok = price > ma_val
+        rsi_ok = rsi_val < RSI_OVERBOUGHT
         vol_ok = vol_today >= vol_ma10 * VOLUME_RATIO_THRESHOLD
 
-        filters[asset]["MA50"] = ma_ok
+        filters[asset]["MA"] = ma_ok
         filters[asset]["RSI"] = rsi_ok
         filters[asset]["VOLUME"] = vol_ok
 
@@ -181,7 +183,9 @@ def get_and_send_signal():
     msg_lines = [
         f"📊 *Dual Momentum+ Signal*",
         f"Дата: {last_date.strftime('%Y-%m-%d')}",
-        f"LOOKBACK: {LOOKBACK} дн. (адаптивно по RVI)",
+        f"RVI: {current_rvi:.2f}",
+        f"LOOKBACK: {LOOKBACK} дн.",
+        f"MA({MA_PERIOD}), RSI({RSI_PERIOD}) — адаптивно по RVI",
         f"Рекомендация: *{selected}*",
         rvi_note,
         "",
@@ -195,10 +199,10 @@ def get_and_send_signal():
     msg_lines.append("")
     msg_lines.append("*Фильтры:*")
     for asset in RISK_ASSETS:
-        ma_status = "✅" if filters[asset]["MA50"] else "❌"
+        ma_status = "✅" if filters[asset]["MA"] else "❌"
         rsi_status = "✅" if filters[asset]["RSI"] else "⚠️"
         vol_status = "✅" if filters[asset]["VOLUME"] else "⚠️"
-        msg_lines.append(f"{asset}: MA50={ma_status}, RSI={rsi_status}, VOL={vol_status}")
+        msg_lines.append(f"{asset}: MA={ma_status}, RSI={rsi_status}, VOL={vol_status}")
 
     message = "\n".join(msg_lines)
 
