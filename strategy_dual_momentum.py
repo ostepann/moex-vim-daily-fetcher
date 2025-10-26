@@ -14,6 +14,13 @@ RVI_THRESHOLD = 30
 RSI_OVERBOUGHT = 70
 VOLUME_RATIO_THRESHOLD = 0.8
 
+# --- Пороги волатильности (годовые, в долях) ---
+VOL_THRESHOLD = {
+    "EQMX": 0.60,   # 60% годовой волатильности — максимум для акций РФ
+    "GOLD": 0.35,   # 35% — для золота
+    "OBLG": 0.10    # 10% — для облигаций
+}
+
 # --- Telegram ---
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -102,8 +109,8 @@ def send_telegram_message(text: str):
 def get_and_send_signal():
     print("🔍 Загрузка данных...")
     df = load_and_prepare_data()
-    if len(df) < 200:
-        msg = f"❌ Недостаточно данных ({len(df)} строк). Нужно ≥200."
+    if len(df) < 250:
+        msg = f"❌ Недостаточно данных ({len(df)} строк). Нужно ≥250."
         print(msg)
         send_telegram_message(msg)
         return
@@ -126,7 +133,8 @@ def get_and_send_signal():
         MA_PERIOD = 50
         RSI_PERIOD = 14
 
-    if len(df) < max(LOOKBACK, MA_PERIOD, RSI_PERIOD) + 1:
+    min_required = max(LOOKBACK, MA_PERIOD, RSI_PERIOD, 21) + 1
+    if len(df) < min_required:
         msg = f"❌ Недостаточно данных для выбранных периодов"
         print(msg)
         send_telegram_message(msg)
@@ -139,14 +147,17 @@ def get_and_send_signal():
         price_past = df[f'CLOSE_{asset}'].iloc[-(LOOKBACK + 1)]
         mom[asset] = price_today / price_past - 1
 
-    # --- Индикаторы с адаптивными периодами ---
+    # --- Индикаторы ---
     for asset in RISK_ASSETS:
         df[f'MA_{asset}'] = df[f'CLOSE_{asset}'].rolling(MA_PERIOD).mean()
         df[f'RSI_{asset}'] = compute_rsi(df[f'CLOSE_{asset}'], RSI_PERIOD)
         df[f'VOL_MA10_{asset}'] = df[f'VOLUME_{asset}'].rolling(10).mean()
+        # Расчёт годовой волатильности (20-дневное окно)
+        returns = df[f'CLOSE_{asset}'].pct_change()
+        df[f'VOLATILITY_{asset}'] = returns.rolling(20).std() * np.sqrt(252)
 
     # --- Фильтры ---
-    filters = {asset: {"MA": False, "RSI": False, "VOLUME": False} for asset in RISK_ASSETS}
+    filters = {asset: {"MA": False, "RSI": False, "VOLUME": False, "VOLATILITY": False} for asset in RISK_ASSETS}
     eligible = []
 
     for asset in RISK_ASSETS:
@@ -155,16 +166,19 @@ def get_and_send_signal():
         rsi_val = df[f'RSI_{asset}'].iloc[-1]
         vol_today = df[f'VOLUME_{asset}'].iloc[-1]
         vol_ma10 = df[f'VOL_MA10_{asset}'].iloc[-1]
+        volatility = df[f'VOLATILITY_{asset}'].iloc[-1]
 
         ma_ok = price > ma_val
         rsi_ok = rsi_val < RSI_OVERBOUGHT
         vol_ok = vol_today >= vol_ma10 * VOLUME_RATIO_THRESHOLD
+        vola_ok = volatility < VOL_THRESHOLD[asset]
 
         filters[asset]["MA"] = ma_ok
         filters[asset]["RSI"] = rsi_ok
         filters[asset]["VOLUME"] = vol_ok
+        filters[asset]["VOLATILITY"] = vola_ok
 
-        if ma_ok and rsi_ok and vol_ok:
+        if ma_ok and rsi_ok and vol_ok and vola_ok:
             eligible.append(asset)
 
     # --- Выбор актива ---
@@ -185,7 +199,7 @@ def get_and_send_signal():
         f"Дата: {last_date.strftime('%Y-%m-%d')}",
         f"RVI: {current_rvi:.2f}",
         f"LOOKBACK: {LOOKBACK} дн.",
-        f"MA({MA_PERIOD}), RSI({RSI_PERIOD}) — адаптивно по RVI",
+        f"MA({MA_PERIOD}), RSI({RSI_PERIOD}) — адаптивно",
         f"Рекомендация: *{selected}*",
         rvi_note,
         "",
@@ -202,7 +216,12 @@ def get_and_send_signal():
         ma_status = "✅" if filters[asset]["MA"] else "❌"
         rsi_status = "✅" if filters[asset]["RSI"] else "⚠️"
         vol_status = "✅" if filters[asset]["VOLUME"] else "⚠️"
-        msg_lines.append(f"{asset}: MA={ma_status}, RSI={rsi_status}, VOL={vol_status}")
+        vola_status = "✅" if filters[asset]["VOLATILITY"] else "⚠️"
+        current_vol = df[f'VOLATILITY_{asset}'].iloc[-1] * 100  # в %
+        msg_lines.append(
+            f"{asset}: MA={ma_status}, RSI={rsi_status}, VOL={vol_status}, "
+            f"σ={vola_status} ({current_vol:.1f}%)"
+        )
 
     message = "\n".join(msg_lines)
 
