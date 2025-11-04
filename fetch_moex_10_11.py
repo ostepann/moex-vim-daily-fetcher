@@ -3,11 +3,14 @@ import requests
 import os
 from datetime import datetime, timedelta
 
-# Создаём папку data
+# Создаём папку data, если её нет
 os.makedirs("data", exist_ok=True)
 
-def fetch_candles(ticker, start_date, end_date, interval=1):
-    url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}/candles.json"
+def fetch_candles_for_date_range(ticker, start_date, end_date, interval=1):
+    """
+    Fetch minute candles from MOEX for a given ticker (lowercase) and date range.
+    MOEX returns: {"candles": {"columns": [...], "data": [...]}}
+    """
     all_rows = []
     current = start_date
 
@@ -15,6 +18,7 @@ def fetch_candles(ticker, start_date, end_date, interval=1):
         day_str = current.strftime("%Y-%m-%d")
         start_offset = 0
         while True:
+            url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}/candles.json"
             params = {
                 "from": day_str,
                 "till": day_str,
@@ -24,16 +28,23 @@ def fetch_candles(ticker, start_date, end_date, interval=1):
             try:
                 resp = requests.get(url, params=params, timeout=20)
                 resp.raise_for_status()
-                data = resp.json()
+                raw = resp.json()
             except Exception as e:
-                print(f"⚠️ Ошибка {ticker} на {day_str}: {e}")
+                print(f"⚠️ Ошибка при загрузке {ticker} на {day_str}: {e}")
                 break
 
-            if len(data) < 2 or not data[1]:
+            # Обработка нового формата: {"candles": {"columns": ..., "data": ...}}
+            if "candles" not in raw:
+                print(f"  → Нет ключа 'candles' в ответе для {ticker} на {day_str}")
                 break
 
-            columns = data[0]['columns']
-            rows = data[1]
+            candles = raw["candles"]
+            columns = candles.get("columns")
+            rows = candles.get("data", [])
+
+            if not columns or not rows:
+                break
+
             all_rows.extend(rows)
             start_offset += len(rows)
             if len(rows) < 500:
@@ -44,38 +55,63 @@ def fetch_candles(ticker, start_date, end_date, interval=1):
     if not all_rows:
         return pd.DataFrame()
 
+    # Извлекаем колонки и создаём DataFrame
+    sample_resp = requests.get(
+        f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}/candles.json",
+        params={"from": start_date.strftime("%Y-%m-%d"), "till": start_date.strftime("%Y-%m-%d"), "interval": interval},
+        timeout=10
+    ).json()
+    columns = sample_resp["candles"]["columns"]
+
     df = pd.DataFrame(all_rows, columns=columns)
     df['begin'] = pd.to_datetime(df['begin'])
     return df
 
 def filter_0959_to_1059(df):
+    """Оставить только свечи с 09:59:00 до 10:59:59 включительно."""
     return df[
         (df['begin'].dt.time >= pd.Timestamp("09:59").time()) &
         (df['begin'].dt.time <= pd.Timestamp("10:59").time())
     ].copy()
 
-# === Дата: сегодня 4 ноября 2025 ===
-TODAY = datetime(2025, 11, 4).date()  # или просто: datetime.now().date()
-START_DATE = TODAY - timedelta(days=60)  # 5 сентября 2025
-END_DATE = TODAY  # 4 ноября 2025
+def ensure_file_exists(filepath, columns):
+    """Создать пустой CSV с заголовками, если файл не существует."""
+    if not os.path.exists(filepath):
+        pd.DataFrame(columns=columns).to_csv(filepath, index=False)
 
-print(f"📅 Диапазон: {START_DATE} – {END_DATE}")
+# === Основная логика ===
+TODAY = datetime.now().date()
+START_DATE = TODAY - timedelta(days=60)
+END_DATE = TODAY
 
-# 🔑 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: тикеры в НИЖНЕМ регистре!
-tickers_lower = ["gold", "eqmx", "oblg"]
+print(f"📅 Запрашиваю данные с {START_DATE} по {END_DATE}")
 
-for ticker in tickers_lower:
-    output_filename = f"{ticker.upper()}_M1_0959_1059.CSV"
-    filepath = os.path.join("data", output_filename)
+# Тикеры в НИЖНЕМ регистре — как в рабочих URL
+RAW_TICKERS = ["gold", "eqmx", "oblg"]
 
-    print(f"\n📥 Запрашиваю {ticker}...")
-    df = fetch_candles(ticker, START_DATE, END_DATE)
+# Получим колонки, сделав один тестовый запрос (для структуры пустого файла)
+try:
+    test_resp = requests.get(
+        "https://iss.moex.com/iss/engines/stock/markets/shares/securities/eqmx/candles.json",
+        params={"from": "2025-11-01", "till": "2025-11-01", "interval": 1},
+        timeout=10
+    ).json()
+    COLUMNS = test_resp["candles"]["columns"]
+except:
+    # fallback
+    COLUMNS = ["open", "close", "high", "low", "value", "volume", "begin", "end"]
+
+for ticker in RAW_TICKERS:
+    filename = f"{ticker.upper()}_M1_0959_1059.CSV"
+    filepath = os.path.join("data", filename)
+
+    print(f"\n📥 Загружаю {ticker}...")
+    df = fetch_candles_for_date_range(ticker, START_DATE, END_DATE, interval=1)
 
     if df.empty:
         print(f"  → Нет данных для {ticker}")
-        # Создаём пустой файл с заголовками
-        empty = pd.DataFrame(columns=['open', 'close', 'high', 'low', 'value', 'volume', 'begin'])
-        empty.to_csv(filepath, index=False)
+        # Создаём пустой файл с правильными заголовками
+        pd.DataFrame(columns=COLUMNS).to_csv(filepath, index=False)
     else:
         df_filtered = filter_0959_to_1059(df)
         print(f"  → Всего: {len(df)}, после фильтра 09:59–10:59: {len(df_filtered)}")
@@ -83,4 +119,4 @@ for ticker in tickers_lower:
 
     print(f"  → Сохранено: {filepath}")
 
-print("\n✅ Завершено.")
+print("\n✅ Готово!")
