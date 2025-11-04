@@ -1,7 +1,8 @@
 name: 🔍 Manual Test: EQMX 2025-11-01
 
 on:
-  workflow_dispatch:  # Позволяет запускать вручную
+  # Позволяет запускать вручную через GitHub UI
+  workflow_dispatch:
 
 permissions:
   contents: write
