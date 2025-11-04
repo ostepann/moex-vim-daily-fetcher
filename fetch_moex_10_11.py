@@ -1,18 +1,17 @@
 import pandas as pd
 import requests
+import os
 from datetime import datetime, timedelta
 
-# MOEX API does not respect time-of-day in 'from'/'till', so we fetch full days and filter locally
-def fetch_full_candles(ticker, start_date, end_date, interval=1):
-    """
-    Fetch all available minute candles for a ticker between start_date and end_date (inclusive).
-    Returns a pandas DataFrame with datetime column 'begin'.
-    """
+# Создаём папку data, если её нет
+os.makedirs("data", exist_ok=True)
+
+def fetch_candles_for_date_range(ticker, start_date, end_date, interval=1):
+    """Fetch minute candles for a given ticker and date range (inclusive)."""
     url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}/candles.json"
     all_rows = []
     current = start_date
 
-    # MOEX has daily limits per request, so we iterate day-by-day to avoid missing data
     while current <= end_date:
         day_str = current.strftime("%Y-%m-%d")
         start_offset = 0
@@ -28,18 +27,18 @@ def fetch_full_candles(ticker, start_date, end_date, interval=1):
                 resp.raise_for_status()
                 data = resp.json()
             except Exception as e:
-                print(f"⚠️ Error fetching {ticker} on {day_str} (offset {start_offset}): {e}")
+                print(f"⚠️ Ошибка загрузки {ticker} на {day_str}: {e}")
                 break
 
             if len(data) < 2 or not data[1]:
-                break  # no more data
+                break
 
             columns = data[0]['columns']
             rows = data[1]
             all_rows.extend(rows)
             start_offset += len(rows)
 
-            if len(rows) < 500:  # MOEX returns max ~500 per page
+            if len(rows) < 500:
                 break
 
         current += timedelta(days=1)
@@ -51,32 +50,39 @@ def fetch_full_candles(ticker, start_date, end_date, interval=1):
     df['begin'] = pd.to_datetime(df['begin'])
     return df
 
-def filter_time_range(df, start_time="09:59", end_time="11:00"):
-    """Keep rows where 'begin' time is in [start_time, end_time)."""
-    start_tm = pd.Timestamp(start_time).time()
-    end_tm = pd.Timestamp(end_time).time()
-    mask = (df['begin'].dt.time >= start_tm) & (df['begin'].dt.time < end_tm)
+def filter_0959_to_1059(df):
+    """Оставить только свечи с 09:59 до 10:59 включительно."""
+    mask = (
+        (df['begin'].dt.time >= pd.Timestamp("09:59").time()) &
+        (df['begin'].dt.time <= pd.Timestamp("10:59").time())
+    )
     return df[mask].copy()
 
-# Configuration
-start = datetime(2025, 9, 1)
-end = datetime(2025, 11, 1)  # inclusive
+# === Основная логика ===
+TODAY = datetime.now().date()
+START_DATE = TODAY - timedelta(days=60)  # включительно
+END_DATE = TODAY
 
-ticker_to_file = {
-    "gold": "GOLD_M1_10_11.CSV",
-    "eqmx": "EQMX_M1_10_11.CSV",
-    "oblg": "OBLG_M1_10_11.CSV"
-}
+print(f"📅 Запрашиваю данные с {START_DATE} по {END_DATE} (последние 60 дней)")
 
-for ticker, filename in ticker_to_file.items():
-    print(f"\n📥 Fetching data for '{ticker}' from {start.date()} to {end.date()}")
-    df_full = fetch_full_candles(ticker, start, end, interval=1)
-    if df_full.empty:
-        print(f"  → No data for '{ticker}'. Skipping.")
+TICKERS = ["GOLD", "EQMX", "OBLG"]
+
+for ticker in TICKERS:
+    filename = f"{ticker}_M1_0959_1059.CSV"  # обновлено имя файла
+    filepath = os.path.join("data", filename)
+
+    print(f"\n📥 Загружаю {ticker}...")
+    df = fetch_candles_for_date_range(ticker, START_DATE, END_DATE, interval=1)
+
+    if df.empty:
+        print(f"  → Нет данных для {ticker}")
         continue
 
-    df_filtered = filter_time_range(df_full)
-    df_filtered.to_csv(filename, index=False, date_format='%Y-%m-%d %H:%M:%S')
-    print(f"  → Saved {len(df_filtered)} rows to {filename}")
+    df_filtered = filter_0959_to_1059(df)
+    print(f"  → Найдено {len(df_filtered)} свечей с 09:59 до 10:59")
 
-print("\n✅ All done!")
+    # Сохраняем (перезаписываем файл)
+    df_filtered.to_csv(filepath, index=False, date_format='%Y-%m-%d %H:%M:%S')
+    print(f"  → Сохранено: {filepath}")
+
+print("\n✅ Готово!")
