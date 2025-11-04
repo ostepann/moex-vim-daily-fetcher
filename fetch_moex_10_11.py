@@ -3,10 +3,10 @@ import requests
 import os
 from datetime import datetime, timedelta
 
-# Создаём папку data, если её нет
+# Создаём папку data
 os.makedirs("data", exist_ok=True)
 
-def fetch_candles_for_date_range(ticker, start_date, end_date, interval=1):
+def fetch_candles(ticker, start_date, end_date, interval=1):
     url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}/candles.json"
     all_rows = []
     current = start_date
@@ -26,7 +26,7 @@ def fetch_candles_for_date_range(ticker, start_date, end_date, interval=1):
                 resp.raise_for_status()
                 data = resp.json()
             except Exception as e:
-                print(f"⚠️ Ошибка загрузки {ticker} на {day_str}: {e}")
+                print(f"⚠️ Ошибка {ticker} на {day_str}: {e}")
                 break
 
             if len(data) < 2 or not data[1]:
@@ -36,7 +36,6 @@ def fetch_candles_for_date_range(ticker, start_date, end_date, interval=1):
             rows = data[1]
             all_rows.extend(rows)
             start_offset += len(rows)
-
             if len(rows) < 500:
                 break
 
@@ -50,45 +49,38 @@ def fetch_candles_for_date_range(ticker, start_date, end_date, interval=1):
     return df
 
 def filter_0959_to_1059(df):
-    mask = (
+    return df[
         (df['begin'].dt.time >= pd.Timestamp("09:59").time()) &
         (df['begin'].dt.time <= pd.Timestamp("10:59").time())
-    )
-    return df[mask].copy()
+    ].copy()
 
-# === Основная логика ===
-TODAY = datetime.now().date()
-START_DATE = TODAY - timedelta(days=60)
-END_DATE = TODAY
+# === Дата: сегодня 4 ноября 2025 ===
+TODAY = datetime(2025, 11, 4).date()  # или просто: datetime.now().date()
+START_DATE = TODAY - timedelta(days=60)  # 5 сентября 2025
+END_DATE = TODAY  # 4 ноября 2025
 
-print(f"📅 Запрашиваю данные с {START_DATE} по {END_DATE}")
+print(f"📅 Диапазон: {START_DATE} – {END_DATE}")
 
-TICKERS = ["GOLD", "EQMX", "OBLG"]
+# 🔑 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: тикеры в НИЖНЕМ регистре!
+tickers_lower = ["gold", "eqmx", "oblg"]
 
-for ticker in TICKERS:
-    filename = f"{ticker}_M1_0959_1059.CSV"
-    filepath = os.path.join("data", filename)
+for ticker in tickers_lower:
+    output_filename = f"{ticker.upper()}_M1_0959_1059.CSV"
+    filepath = os.path.join("data", output_filename)
 
-    print(f"\n📥 Обрабатываю {ticker}...")
+    print(f"\n📥 Запрашиваю {ticker}...")
+    df = fetch_candles(ticker, START_DATE, END_DATE)
 
-    # Создаём пустой DataFrame с ожидаемой структурой
-    empty_df = pd.DataFrame(columns=[
-        'open', 'close', 'high', 'low', 'value', 'volume', 'begin'
-    ])
+    if df.empty:
+        print(f"  → Нет данных для {ticker}")
+        # Создаём пустой файл с заголовками
+        empty = pd.DataFrame(columns=['open', 'close', 'high', 'low', 'value', 'volume', 'begin'])
+        empty.to_csv(filepath, index=False)
+    else:
+        df_filtered = filter_0959_to_1059(df)
+        print(f"  → Всего: {len(df)}, после фильтра 09:59–10:59: {len(df_filtered)}")
+        df_filtered.to_csv(filepath, index=False, date_format='%Y-%m-%d %H:%M:%S')
 
-    try:
-        df_full = fetch_candles_for_date_range(ticker, START_DATE, END_DATE, interval=1)
-        if df_full.empty:
-            df_to_save = empty_df
-        else:
-            df_filtered = filter_0959_to_1059(df_full)
-            df_to_save = df_filtered if not df_filtered.empty else empty_df
-    except Exception as e:
-        print(f"  ❌ Исключение при обработке {ticker}: {e}")
-        df_to_save = empty_df
+    print(f"  → Сохранено: {filepath}")
 
-    # ВСЕГДА сохраняем файл (даже пустой)
-    df_to_save.to_csv(filepath, index=False, date_format='%Y-%m-%d %H:%M:%S')
-    print(f"  → Файл сохранён: {filepath} ({len(df_to_save)} строк)")
-
-print("\n✅ Все файлы созданы.")
+print("\n✅ Завершено.")
