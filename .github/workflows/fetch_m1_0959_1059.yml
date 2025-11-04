@@ -1,21 +1,16 @@
 name: Fetch MOEX M1 Data 09:59–10:59 (Last 60 Days)
 
 on:
-  # Запускать вручную через GitHub UI
   workflow_dispatch:
-
-  # Ежедневный запуск в 02:00 UTC (до открытия торгов на MOEX)
   schedule:
     - cron: "0 2 * * *"
 
-# Разрешаем workflow писать в репозиторий (для git push)
 permissions:
   contents: write
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    name: Fetch and update MOEX 09:59–10:59 data
 
     steps:
       - name: Checkout repository
@@ -31,14 +26,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests
 
-      - name: Run MOEX data fetcher (09:59–10:59, last 60 days)
+      - name: Run MOEX data fetcher
         run: python fetch_moex_10_11.py
 
       - name: Commit and push updated CSV files
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Файлы точно существуют — добавляем без страха
           git add data/*.CSV
-          git status
-          git commit -m "MOEX M1 09:59–10:59: update (last 60 days)" || echo "No changes to commit"
-          git push
+          
+          # Коммитим только если есть изменения
+          if ! git diff --quiet --cached; then
+            git commit -m "MOEX M1 09:59–10:59: update (last 60 days)"
+            git push
+          else
+            echo "♻️ Нет изменений в CSV — коммит не требуется."
+          fi
