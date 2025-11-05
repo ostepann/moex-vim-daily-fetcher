@@ -1,0 +1,36 @@
+name: Optimize Morning Filter
+
+on:
+  workflow_dispatch:  # Только вручную (оптимизация не нужна ежедневно)
+  # Можно добавить schedule, если нужно регулярно (не рекомендуется чаще 1 раза в неделю)
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas matplotlib numpy
+
+      - name: Run morning filter optimization
+        run: python optimize_morning_filter.py
+
+      - name: Commit and push results
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add data/morning_filter_results.csv data/morning_filter_optimization.png
+          git commit -m "Optimize morning filter: new results" || echo "No changes"
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
