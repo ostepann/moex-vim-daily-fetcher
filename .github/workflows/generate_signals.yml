@@ -1,0 +1,37 @@
+name: Generate Dual Momentum Signals
+
+on:
+  schedule:
+    - cron: "10 3 * * *"  # каждый день в 03:10 UTC (06:10 МСК)
+  workflow_dispatch:      # позволяет запустить вручную из GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas
+
+      - name: Generate signals
+        run: python generate_signals.py
+
+      - name: Commit and push signals.csv
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add data/signals.csv
+          git commit -m "Auto-generate signals (lookback=2)" || echo "No changes"
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
