@@ -27,7 +27,7 @@ def get_last_calendar_days(n):
     start_date = today - timedelta(days=n-1)
     from_str = start_date.strftime('%Y-%m-%dT00:00:00')
     till_str = today.strftime('%Y-%m-%dT23:59:59')
-    return from_str, till_str # Исправлено: было till_time, должно быть till_str
+    return from_str, till_str
 
 def fetch_candles(secid, interval, from_time, till_time):
     """Получает данные по свечам для указанного инструмента."""
@@ -42,7 +42,7 @@ def fetch_candles(secid, interval, from_time, till_time):
         raise ValueError(f"Неожиданная структура данных для {secid}")
 
     candles_data = data['candles']['data']
-    if not candles_: # Проверяем, есть ли данные
+    if not candles_data: # Исправлено: было candles_, должно быть candles_data
         print(f"Предупреждение: Для инструмента {secid} не найдены данные за указанный период.")
         return pd.DataFrame()
 
