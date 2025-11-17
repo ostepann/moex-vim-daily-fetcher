@@ -42,21 +42,18 @@ def fetch_candles(secid, interval, from_time, till_time):
         raise ValueError(f"Неожиданная структура данных для {secid}")
 
     candles_data = data['candles']['data']
-    if not candles_data: # Проверяем, есть ли данные
+    if not candles_: # Проверяем, есть ли данные
         print(f"Предупреждение: Для инструмента {secid} не найдены данные за указанный период.")
         return pd.DataFrame()
 
-    # ИСПОЛЬЗУЕМ СТОЛБЦЫ ИЗ МЕТАДАННЫХ API
-    # Это критически важно для правильного сопоставления
-    columns = [col[0] for col in data['candles']['columns']]
+    # ИСПОЛЬЗУЕМ ТОЧНУЮ ПОСЛЕДОВАТЕЛЬНОСТЬ ПОЛЕЙ ИЗ ВАШЕГО ВЫВОДА
+    columns = ["open", "close", "high", "low", "value", "volume", "begin", "end"]
     
     df = pd.DataFrame(candles_data, columns=columns)
     
-    # Преобразуем только те столбцы, которые являются датами/временем
-    time_columns = ['begin', 'end']  # Обычные названия временных столбцов
-    for col in time_columns:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col])
+    # Преобразуем столбцы begin и end в datetime
+    df['begin'] = pd.to_datetime(df['begin'])
+    df['end'] = pd.to_datetime(df['end'])
     
     df.sort_values('begin', inplace=True)
     return df
@@ -76,28 +73,4 @@ def save_and_truncate(df, filename, rows_to_keep):
     combined_df.sort_values('begin', inplace=True)
     final_df = combined_df.tail(rows_to_keep).copy()
     final_df.to_csv(path, index=False)
-    print(f"Данные сохранены в {path}. Оставлено строк: {len(final_df)}")
-
-# --- Основной код ---
-if __name__ == "__main__":
-    from_time, till_time = get_last_calendar_days(7)
-    print(f"Загрузка данных с {from_time} до {till_time}")
-
-    for moex_code, file_prefix in INSTRUMENTS.items():
-        print(f"\nОбработка инструмента: {moex_code}")
-        try:
-            df = fetch_candles(moex_code, INTERVAL, from_time, till_time)
-            if not df.empty:
-                filename = f"{file_prefix}_H1_35.CSV"
-                save_and_truncate(df, filename, ROWS_TO_KEEP)
-                print(f"Успешно обработан {moex_code}")
-            else:
-                print(f"Для {moex_code} не было получено новых данных.")
-        except requests.exceptions.RequestException as e:
-            print(f"Ошибка при запросе к API для {moex_code}: {e}")
-        except ValueError as e:
-            print(f"Ошибка при обработке данных для {moex_code}: {e}")
-        except Exception as e:
-            print(f"Неизвестная ошибка при обработке {moex_code}: {e}")
-
-    print("\nЗагрузка завершена.")
+    print(f"Данны
