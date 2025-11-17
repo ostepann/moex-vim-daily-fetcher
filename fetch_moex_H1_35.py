@@ -42,7 +42,7 @@ def fetch_candles(secid, interval, from_time, till_time):
         raise ValueError(f"Неожиданная структура данных для {secid}")
 
     candles_data = data['candles']['data']
-    if not candles_data:
+    if not candles_
         print(f"Предупреждение: Для инструмента {secid} не найдены данные за указанный период.")
         return pd.DataFrame()
 
