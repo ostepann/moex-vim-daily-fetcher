@@ -42,13 +42,22 @@ def fetch_candles(secid, interval, from_time, till_time):
         raise ValueError(f"Неожиданная структура данных для {secid}")
 
     candles_data = data['candles']['data']
-    if not candles_data: # Исправлено: было 'candles_', должно быть 'candles_data'
+    if not candles_data: # Проверяем, есть ли данные
         print(f"Предупреждение: Для инструмента {secid} не найдены данные за указанный период.")
         return pd.DataFrame()
 
-    columns = ['begin', 'end', 'open', 'close', 'high', 'low', 'volume', 'cost']
+    # ИСПОЛЬЗУЕМ СТОЛБЦЫ ИЗ МЕТАДАННЫХ API
+    # Это критически важно для правильного сопоставления
+    columns = [col[0] for col in data['candles']['columns']]
+    
     df = pd.DataFrame(candles_data, columns=columns)
-    df['begin'] = pd.to_datetime(df['begin'])
+    
+    # Преобразуем только те столбцы, которые являются датами/временем
+    time_columns = ['begin', 'end']  # Обычные названия временных столбцов
+    for col in time_columns:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col])
+    
     df.sort_values('begin', inplace=True)
     return df
 
