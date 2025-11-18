@@ -5,7 +5,7 @@ import os
 import requests
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Пути к файлам (всё в папке data/ текущего репозитория)
+# Пути к файлам
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 DAILY_PATHS = {
@@ -30,7 +30,6 @@ def load_csv(filepath):
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Файл не найден: {filepath}")
     df = pd.read_csv(filepath)
-    # Ожидаем колонку TRADEDATE или begin
     if 'TRADEDATE' in df.columns:
         df['TRADEDATE'] = pd.to_datetime(df['TRADEDATE'])
         df.set_index('TRADEDATE', inplace=True)
@@ -127,11 +126,11 @@ def generate_signal(ticker):
     return signal, reason, rvi
 
 def send_telegram(message):
-    bot_token = os.getenv("BOT_TOKEN")
-    chat_id = os.getenv("CHAT_ID")
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")  # ✅ Правильное имя
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")      # ✅ Правильное имя
 
     if not bot_token or not chat_id:
-        print("❌ BOT_TOKEN или CHAT_ID не заданы.")
+        print("❌ TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы.")
         return
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -147,7 +146,6 @@ def send_telegram(message):
 
 def main():
     from datetime import datetime, timezone
-    # Время в MSK (UTC+3)
     dt = datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")
     message = f"📊 *Сигналы на {dt} (MSK)*\n"
 
