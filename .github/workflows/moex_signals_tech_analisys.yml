@@ -26,5 +26,5 @@ jobs:
       - name: Run MOEX Signals Tech Analysis
         run: python moex_signals_tech_analisys.py
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
