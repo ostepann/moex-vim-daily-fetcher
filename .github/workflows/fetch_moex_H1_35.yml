@@ -3,7 +3,7 @@ name: Fetch MOEX H1 Data (35 rows)
 on:
   schedule:
     # Запускать ежедневно в 00:01 UTC
-    - cron: '1 0 * * *'
+    - cron: '2 8 * * *'
   workflow_dispatch:
 
 # Добавьте этот блок для предоставления прав на запись
