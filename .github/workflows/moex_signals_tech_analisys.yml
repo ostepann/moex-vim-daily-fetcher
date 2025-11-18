@@ -1,0 +1,30 @@
+name: MOEX Signals Tech Analysis
+
+on:
+  schedule:
+    # Запуск каждый день в 08:15 UTC → это 11:15 MSK
+    - cron: '15 8 * * *'
+  workflow_dispatch:  # Позволяет запустить вручную
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas numpy matplotlib scipy yfinance requests
+
+      - name: Run MOEX Signals Tech Analysis
+        run: python moex_signals_tech_analisys.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
