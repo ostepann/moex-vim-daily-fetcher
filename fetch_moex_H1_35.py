@@ -11,7 +11,7 @@ import os
 # --- Настройки ---
 INSTRUMENTS = {
     'EQMX': 'EQMX',
-    'GOLD': 'GOLG',  # Код для файла (предполагаемый)
+    'GOLD': 'GOLD',  # Код для файла (предполагаемый)
     'OBLG': 'OBLG'
 }
 
