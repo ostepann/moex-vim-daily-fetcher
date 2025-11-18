@@ -2,14 +2,16 @@ name: MOEX Signals Tech Analysis
 
 on:
   schedule:
-    - cron: '15 8 * * *'  # 11:15 MSK
-  workflow_dispatch:
+    # Запуск каждый день в 08:15 UTC → это 11:15 MSK
+    - cron: '15 8 * * *'
+  workflow_dispatch:  # позволяет запустить вручную из GitHub UI
 
 jobs:
   run-signal:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -21,7 +23,7 @@ jobs:
         run: |
           pip install pandas numpy scipy requests
 
-      - name: Run signal generator
+      - name: Run MOEX Technical Analysis Signal Generator
         run: python moex_signals_tech_analisys.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
