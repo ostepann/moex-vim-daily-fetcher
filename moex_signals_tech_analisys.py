@@ -37,7 +37,6 @@ def load_csv(filepath):
 
 def get_latest_rvi():
     df = load_csv(RVI_PATH)
-    display(df.tail(1))
     return df['close'].iloc[-1]  # теперь 'close' точно существует
 
 def calculate_adaptive_ema_span(rvi_value):
