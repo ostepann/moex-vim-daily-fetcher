@@ -22,10 +22,7 @@ def load_csv(filepath):
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Файл не найден: {filepath}")
     df = pd.read_csv(filepath)
-    print(f"\n🔍 Загрузка {filepath}")
-    print(f"   Исходные колонки: {list(df.columns)}")
     df.columns = df.columns.str.lower()
-    print(f"   Колонки после lower(): {list(df.columns)}")
     date_col = None
     for col in ['tradedate', 'begin']:
         if col in df.columns:
@@ -36,15 +33,16 @@ def load_csv(filepath):
         df.set_index(date_col, inplace=True)
     else:
         df.index = pd.to_datetime(df.index)
-    print(f"   Дата-колонка: {date_col}")
-    print(f"   Размер данных: {df.shape}")
-    print(f"   Пример данных (последние 2 строки):\n{df.tail(2)}")
-    print(f"   NaN в 'close': {df['close'].isna().sum()}")
+    # ————————————————————————————————————————————————————————————————————————————————————————————————
+    # ✅ УДАЛЯЕМ строки с NaT в индексе и NaN в данных
+    # ————————————————————————————————————————————————————————————————————————————————————————————————
+    df = df.dropna()  # удаляем строки с NaN в любых колонках
+    df = df[df.index.notna()]  # удаляем строки с NaT в индексе
+    # ————————————————————————————————————————————————————————————————————————————————————————————————
     return df
 
 def get_latest_rvi():
     df = load_csv(RVI_PATH)
-    print(f"\n📊 RVI данные (последние 3 строки):\n{df[['close']].tail(3)}")
     return df['close'].iloc[-1]
 
 def calculate_adaptive_ema_span(rvi_value):
@@ -57,7 +55,6 @@ def calculate_adaptive_ema_span(rvi_value):
 
 def find_levels(data, order=5):
     if 'high' not in data.columns or 'low' not in data.columns:
-        print(f"❌ В данных нет колонок 'high' или 'low'")
         return np.array([]), np.array([])
     highs = data['high'].values
     lows = data['low'].values
@@ -79,11 +76,9 @@ def find_levels(data, order=5):
 def check_confirmation_h1(ticker):
     filepath = HOURLY_PATHS[ticker]
     if not os.path.exists(filepath):
-        print(f"⚠️ H1 файл не найден: {filepath}")
         return True
     df_h1 = load_csv(filepath)
     if 'close' not in df_h1.columns:
-        print(f"❌ В H1 данных нет 'close'")
         return True
     df_h1.sort_index(inplace=True)
     delta = df_h1['close'].diff()
@@ -92,7 +87,6 @@ def check_confirmation_h1(ticker):
     rs = gain / loss
     rsi_h1 = 100 - (100 / (1 + rs))
     current_rsi = rsi_h1.iloc[-1]
-    print(f"   RSI(H1) для {ticker}: {current_rsi:.2f}")
     return 30 < current_rsi < 70
 
 def generate_signal(ticker):
@@ -100,29 +94,26 @@ def generate_signal(ticker):
     df_daily.sort_index(inplace=True)
 
     if 'close' not in df_daily.columns or 'volume' not in df_daily.columns:
-        print(f"❌ В дневных данных {ticker} нет нужных колонок")
         return "HOLD", "Ошибка данных", float('nan'), 50, float('nan'), float('nan'), [], [], float('nan')
 
+    # ————————————————————————————————————————————————————————————————————————————————————————————————
+    # ✅ Теперь `iloc[-1]` возвращает реальные данные, т.к. NaN и NaT удалены
+    # ————————————————————————————————————————————————————————————————————————————————————————————————
     current_price = df_daily['close'].iloc[-1]
     current_volume = df_daily['volume'].iloc[-1]
-    print(f"\n🎯 {ticker} — Цена: {current_price}, Объём: {current_volume}")
 
     try:
         rvi = get_latest_rvi()
     except Exception as e:
-        print(f"❌ Ошибка RVI: {e}")
         rvi = float('nan')
     ema_span = calculate_adaptive_ema_span(rvi) if not pd.isna(rvi) else 50
     df_daily['ema'] = df_daily['close'].ewm(span=ema_span, adjust=False).mean()
     current_ema = df_daily['ema'].iloc[-1]
-    print(f"   EMA({ema_span}): {current_ema}")
 
     supports, resistances = find_levels(df_daily)
-    print(f"   Найдено уровней — Поддержка: {len(supports)}, Сопротивление: {len(resistances)}")
 
     nearby_supports = [level for level in supports if abs(current_price - level) / current_price < 0.02]
     nearby_resistances = [level for level in resistances if abs(current_price - level) / current_price < 0.02]
-    print(f"   Ближайшие уровни — Поддержка: {nearby_supports}, Сопротивление: {nearby_resistances}")
 
     signal = "HOLD"
     reason = ""
@@ -162,7 +153,7 @@ def send_telegram(message):
 def main():
     from datetime import datetime, timezone
     dt = datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")
-    message = f"📊 Сигналы на {dt} (MSK)\n"
+    message = f"📊 *Сигналы на {dt} (MSK)*\n"
 
     try:
         rvi = get_latest_rvi()
