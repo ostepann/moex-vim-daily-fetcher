@@ -79,33 +79,54 @@ def check_confirmation_h1(ticker):
     current_rsi = rsi_h1.iloc[-1]
     return 30 < current_rsi < 70
 
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# НОВАЯ ВЕРСИЯ generate_signal (возвращает ближайшие уровни и RVI)
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
 def generate_signal(ticker):
     df_daily = load_csv(DAILY_PATHS[ticker])
     df_daily.sort_index(inplace=True)
     current_price = df_daily['close'].iloc[-1]
     current_volume = df_daily['volume'].iloc[-1]
-    rvi = get_latest_rvi()
-    ema_span = calculate_adaptive_ema_span(rvi)
+
+    # RVI и адаптивная EMA
+    try:
+        rvi = get_latest_rvi()
+    except:
+        rvi = float('nan')
+    ema_span = calculate_adaptive_ema_span(rvi) if not pd.isna(rvi) else 50
     df_daily['ema'] = df_daily['close'].ewm(span=ema_span, adjust=False).mean()
     current_ema = df_daily['ema'].iloc[-1]
+
+    # Поиск уровней
     supports, resistances = find_levels(df_daily)
+
+    # Фильтруем только **ближайшие уровни** (в пределах 2% от цены)
+    nearby_supports = [level for level in supports if abs(current_price - level) / current_price < 0.02]
+    nearby_resistances = [level for level in resistances if abs(current_price - level) / current_price < 0.02]
+
+    # Определение сигнала
     signal = "HOLD"
     reason = ""
-    for level in supports:
-        if abs(current_price - level) / current_price < 0.01:
-            if current_price > current_ema and current_volume > df_daily['volume'].quantile(0.7):
-                if check_confirmation_h1(ticker):
-                    signal = "BUY"
-                    reason = f"Поддержка: {level:.2f}, EMA({ema_span}): {current_ema:.2f}, объём ↑"
-                    break
-    for level in resistances:
-        if abs(current_price - level) / current_price < 0.01:
-            if current_price < current_ema and current_volume > df_daily['volume'].quantile(0.7):
-                if check_confirmation_h1(ticker):
-                    signal = "SELL"
-                    reason = f"Сопротивление: {level:.2f}, EMA({ema_span}): {current_ema:.2f}, объём ↑"
-                    break
-    return signal, reason, rvi
+
+    # Проверка на близость к поддержке
+    for level in nearby_supports:
+        if current_price > current_ema and current_volume > df_daily['volume'].quantile(0.7):
+            if check_confirmation_h1(ticker):
+                signal = "BUY"
+                reason = f"Поддержка: {level:.2f}, EMA({ema_span}): {current_ema:.2f}, объём ↑"
+                break
+
+    # Проверка на близость к сопротивлению
+    for level in nearby_resistances:
+        if current_price < current_ema and current_volume > df_daily['volume'].quantile(0.7):
+            if check_confirmation_h1(ticker):
+                signal = "SELL"
+                reason = f"Сопротивление: {level:.2f}, EMA({ema_span}): {current_ema:.2f}, объём ↑"
+                break
+
+    # Возвращаем данные
+    return signal, reason, rvi, ema_span, current_price, current_ema, nearby_supports, nearby_resistances, current_volume
 
 def send_telegram(message):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -124,20 +145,33 @@ def send_telegram(message):
     except Exception as e:
         print(f"❌ Ошибка отправки: {e}")
 
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# НОВАЯ main (с расширенным сообщением и RVI)
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
 def main():
     from datetime import datetime, timezone
     dt = datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")
     message = f"📊 *Сигналы на {dt} (MSK)*\n"
+
     try:
         rvi = get_latest_rvi()
         message += f"RVI: {rvi:.1f}\n\n"
     except Exception as e:
         message += "RVI: N/A\n\n"
+        rvi = float('nan')
+
     for ticker in ["OBLG", "EQMX", "GOLD"]:
         try:
-            signal, reason, _ = generate_signal(ticker)
+            signal, reason, rvi_val, ema_span, price, ema_val, nearby_supports, nearby_resistances, volume = generate_signal(ticker)
             emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(signal, "⚪")
-            message += f"{emoji} {ticker}: {signal}\n"
+            message += f"{emoji} *{ticker}*\n"
+            message += f"   Цена: {price:.2f}\n"
+            message += f"   EMA({ema_span}): {ema_val:.2f}\n"
+            message += f"   Объём: {volume:.0f}\n"
+            message += f"   Поддержки вблизи: [{', '.join([f'{x:.2f}' for x in sorted(nearby_supports)])}]\n"
+            message += f"   Сопротивления вблизи: [{', '.join([f'{x:.2f}' for x in sorted(nearby_resistances)])}]\n"
+            message += f"   Рекомендация: {signal}\n"
             if reason:
                 message += f"   - {reason}\n"
             else:
@@ -145,6 +179,7 @@ def main():
             message += "\n"
         except Exception as e:
             message += f"🔴 {ticker}: ERROR ({str(e)})\n\n"
+
     send_telegram(message.strip())
 
 if __name__ == "__main__":
