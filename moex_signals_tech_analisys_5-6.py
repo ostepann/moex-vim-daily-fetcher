@@ -99,7 +99,7 @@ def check_confirmation_h1(ticker):
     return 30 < current_rsi < 70
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Генерация сигнала с умными комментариями, стопами и тейками
+# Генерация сигнала (ИСПРАВЛЕНО: защита от BUY в нисходящем тренде)
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 def generate_signal(ticker):
@@ -161,12 +161,11 @@ def generate_signal(ticker):
 
     volume_desc = format_volume_ratios(volume_ratios)
 
-    # Уровни (все в пределах 3%)
+    # Уровни
     supports, resistances = find_levels(df)
     nearby_supports_full = [level for level in supports if abs(current_price - level) / current_price < 0.03]
     nearby_resistances_full = [level for level in resistances if abs(current_price - level) / current_price < 0.03]
 
-    # Для отображения: вблизи (1.5%) или ближайший
     nearby_supports = [level for level in supports if abs(current_price - level) / current_price < 0.015]
     nearby_resistances = [level for level in resistances if abs(current_price - level) / current_price < 0.015]
 
@@ -186,56 +185,72 @@ def generate_signal(ticker):
     take_profit = None
 
     # —————————————————————————————————————————————————————————————
-    # УМНЫЕ КОММЕНТАРИИ + СТОПЫ/ТЕЙКИ
+    # УМНЫЕ КОММЕНТАРИИ (ИСПРАВЛЕНО)
     # —————————————————————————————————————————————————————————————
 
-    # 1. Сильный тренд + объём
+    # 1. Сильный тренд + объём (только в восходящем!)
     if (ema_trend == "растёт" and current_price > current_ema and 
         price_changes[5] and price_changes[5] > 3 and volume_ratios[10] > 1.5 and h1_confirmed):
         signal = "BUY"
         interpretation = "Сильный восходящий тренд + высокий объём → продолжение роста"
         take_profit = nearby_resistances_full[0] if nearby_resistances_full else current_price * 1.02
         stop_loss = max(nearby_supports_full[-1] if nearby_supports_full else current_price * 0.985, current_ema * 0.99)
+        # Гарантия: тейк > цены
+        if take_profit <= current_price:
+            take_profit = current_price * 1.015
 
-    # 2. Коррекция в тренде
+    # 2. Коррекция в восходящем тренде
     elif (ema_trend == "растёт" and current_price > current_ema and 
           price_changes[1] and price_changes[1] < 0 and 
           price_changes[5] and price_changes[5] > 2 and h1_confirmed):
         signal = "HOLD"
         interpretation = "Коррекция в восходящем тренде. Ждём подтверждения отскока"
 
-    # 3. Отскок от поддержки
+    # 3. Отскок от поддержки (ТОЛЬКО если тренд не нисходящий!)
     elif (nearby_supports and current_price > nearby_supports[-1] * 0.995 and 
-          volume_ratios[5] > 1.3 and h1_confirmed):
+          volume_ratios[5] > 1.3 and h1_confirmed and
+          current_price > current_ema):  # ← КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
         signal = "BUY"
         interpretation = "Цена у поддержки, объём высокий → возможен отскок вверх"
         take_profit = nearby_resistances_full[0] if nearby_resistances_full else current_price * 1.015
         stop_loss = nearby_supports[-1] * 0.99
+        if take_profit <= current_price:
+            take_profit = current_price * 1.01
 
-    # 4. Пробой сопротивления
+    # 4. Пробой сопротивления (в восходящем или боковом)
     elif (nearby_resistances and current_price > nearby_resistances[0] and 
-          volume_ratios[1] > 1.5 and h1_confirmed):
+          volume_ratios[1] > 1.5 and h1_confirmed and
+          current_price > current_ema):  # ← защищаем от ложных пробоев внизу
         signal = "BUY"
         interpretation = "Пробой сопротивления на высоком объёме → вход после подтверждения"
         take_profit = current_price * 1.02
         stop_loss = nearby_resistances[0] * 0.995
 
-    # 5. Тест уровня после пробоя (retest)
+    # 5. Retest поддержки (после роста)
     elif (len(df) > 10 and 
-          current_price > df['ema'].iloc[-5] and  # был рост
+          current_price > df['ema'].iloc[-5] and
           nearby_supports and current_price < nearby_supports[0] * 1.005 and
-          volume_ratios[1] > 0.8 and h1_confirmed):
+          volume_ratios[1] > 0.8 and h1_confirmed and
+          current_price > current_ema):
         signal = "BUY"
         interpretation = "Тест бывшего сопротивления (теперь поддержка) → идеальная точка входа"
         take_profit = nearby_resistances_full[0] if nearby_resistances_full else current_price * 1.02
         stop_loss = nearby_supports[0] * 0.99
+        if take_profit <= current_price:
+            take_profit = current_price * 1.015
 
-    # 6. Высокая волатильность — требует подтверждения
+    # 6. Высокая волатильность — ждём подтверждения
     elif rvi > 25 and not h1_confirmed:
         signal = "HOLD"
         interpretation = f"Высокая волатильность (RVI={rvi:.1f}). Требуется подтверждение по H1"
 
-    # Округление стопов/тейков
+    # 7. Сильный нисходящий тренд — можно добавить SELL (опционально)
+    elif (ema_trend == "падает" and current_price < current_ema and 
+          price_changes[5] and price_changes[5] < -3 and volume_ratios[10] > 1.5 and h1_confirmed):
+        signal = "HOLD"  # или "SELL", если разрешите короткие позиции
+        interpretation = "Сильный нисходящий тренд. Избегать лонгов."
+
+    # Округление
     if stop_loss:
         stop_loss = round(stop_loss, 2)
     if take_profit:
