@@ -25,7 +25,19 @@ RVI_PATH = "data/RVI.csv"
 
 PRICE_DYNAMICS = [1, 5, 10]
 EMA_TREND_WINDOW = 5
-MAX_STOP_DISTANCE = 0.03  # Максимум 3% от цены (можно увеличить до 0.05 = 5%)
+MAX_STOP_DISTANCE = 0.03  # 3%
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Вспомогательные индикаторы
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 # Загрузка и очистка данных
@@ -100,13 +112,17 @@ def check_confirmation_h1(ticker):
     return 30 < current_rsi < 70
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Генерация сигнала (с ограничением стопа)
+# Генерация сигнала (с RSI-интерпретацией)
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 def generate_signal(ticker):
     df = load_csv(DAILY_PATHS[ticker])
     current_price = df['close'].iloc[-1]
     current_volume = df['volume'].iloc[-1]
+
+    # ——— RSI ———
+    rsi_series = calculate_rsi(df['close'])
+    current_rsi = rsi_series.iloc[-1] if len(rsi_series) > 0 else 50
 
     try:
         rvi = get_latest_rvi()
@@ -182,52 +198,45 @@ def generate_signal(ticker):
 
     signal = "HOLD"
     interpretation = "Нет чёткого сигнала"
+    rsi_comment = ""
     stop_loss = None
     take_profit = None
 
-    # —————————————————————————————————————————————————————————————
-    # ПРАВИЛА С ОГРАНИЧЕННЫМ СТОПОМ
-    # —————————————————————————————————————————————————————————————
+    # ——— Интерпретация RSI ———
+    if current_rsi < 30:
+        rsi_comment = "RSI: зона перепроданности → возможен отскок"
+    elif current_rsi > 70:
+        rsi_comment = "RSI: зона перекупленности → возможен откат"
+    else:
+        rsi_comment = ""
 
-    # 1. Сильный тренд + объём
+    # ——— Правила сигналов ———
     if (ema_trend == "растёт" and current_price > current_ema and 
         price_changes[5] and price_changes[5] > 3 and volume_ratios[10] > 1.5 and h1_confirmed):
         signal = "BUY"
         interpretation = "Сильный восходящий тренд + высокий объём → продолжение роста"
-        
         take_profit = resistances_above[0] if resistances_above else current_price * 1.02
+        recent_supports = [s for s in supports_below if (current_price - s) / current_price <= 0.05]
+        if recent_supports:
+            stop_loss = max(recent_supports) * 0.995
+        else:
+            stop_loss = current_ema * 0.99
 
-        # Стоп: приоритет — поддержка, потом EMA, потом % от цены
-        stop_candidate = None
-        if supports_below:
-            # Берём поддержки не далее 5% от цены
-            recent_supports = [s for s in supports_below if (current_price - s) / current_price <= 0.05]
-            if recent_supports:
-                stop_candidate = max(recent_supports) * 0.995
-        if stop_candidate is None:
-            stop_candidate = current_ema * 0.99
-        if stop_candidate is None:
-            stop_candidate = current_price * (1 - MAX_STOP_DISTANCE)
-
-        stop_loss = stop_candidate
-
-    # 2. Коррекция в тренде
     elif (ema_trend == "растёт" and current_price > current_ema and 
           price_changes[1] and price_changes[1] < 0 and 
           price_changes[5] and price_changes[5] > 2 and h1_confirmed):
         signal = "HOLD"
         interpretation = "Коррекция в восходящем тренде. Ждём подтверждения отскока"
 
-    # 3. Отскок от поддержки
     elif (supports_near and current_price > supports_near[-1] * 0.995 and 
           volume_ratios[5] > 1.3 and h1_confirmed and
           current_price > current_ema):
         signal = "BUY"
-        interpretation = "Цена у поддержки, объём высокий → возможен отскок вверх"
+        base_msg = "Цена у поддержки, объём высокий → возможен отскок вверх"
+        interpretation = f"{base_msg}. {rsi_comment}" if rsi_comment else base_msg
         take_profit = resistances_above[0] if resistances_above else current_price * 1.015
         stop_loss = supports_near[-1] * 0.99
 
-    # 4. Пробой сопротивления
     elif (resistances_near and current_price > resistances_near[0] and 
           volume_ratios[1] > 1.5 and h1_confirmed and
           current_price > current_ema):
@@ -236,45 +245,36 @@ def generate_signal(ticker):
         take_profit = current_price * 1.02
         stop_loss = resistances_near[0] * 0.995
 
-    # 5. Retest поддержки
     elif (len(df) > 10 and 
           current_price > df['ema'].iloc[-5] and
           supports_near and current_price < supports_near[0] * 1.005 and
           volume_ratios[1] > 0.8 and h1_confirmed and
           current_price > current_ema):
         signal = "BUY"
-        interpretation = "Тест бывшего сопротивления (теперь поддержка) → идеальная точка входа"
+        base_msg = "Тест бывшего сопротивления (теперь поддержка) → идеальная точка входа"
+        interpretation = f"{base_msg}. {rsi_comment}" if rsi_comment else base_msg
         take_profit = resistances_above[0] if resistances_above else current_price * 1.02
         stop_loss = supports_near[0] * 0.99
 
-    # 6. Высокая волатильность
     elif rvi > 25 and not h1_confirmed:
         signal = "HOLD"
         interpretation = f"Высокая волатильность (RVI={rvi:.1f}). Требуется подтверждение по H1"
 
-    # 7. Сильный нисходящий тренд
     elif (ema_trend == "падает" and current_price < current_ema and 
           price_changes[5] and price_changes[5] < -3 and volume_ratios[10] > 1.5 and h1_confirmed):
         signal = "HOLD"
         interpretation = "Сильный нисходящий тренд. Избегать лонгов."
 
-    # —————————————————————————————————————————————————————————————
-    # ФИНАЛЬНЫЕ ГАРАНТИИ
-    # —————————————————————————————————————————————————————————————
-
+    # ——— Финальные гарантии ———
     if signal == "BUY":
-        # Стоп должен быть ниже цены и не дальше MAX_STOP_DISTANCE
         max_stop = current_price * (1 - MAX_STOP_DISTANCE)
         if stop_loss is None or stop_loss >= current_price:
             stop_loss = max_stop
         elif stop_loss < max_stop:
-            stop_loss = max_stop  # не уходим слишком далеко
-
-        # Тейк должен быть выше цены
+            stop_loss = max_stop
         if take_profit is None or take_profit <= current_price:
             take_profit = current_price * 1.015
 
-    # Округление
     if stop_loss:
         stop_loss = round(stop_loss, 2)
     if take_profit:
@@ -292,6 +292,7 @@ def generate_signal(ticker):
         "resistances": sorted(resistances_near),
         "signal": signal,
         "interpretation": interpretation,
+        "rsi_comment": rsi_comment,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
         "rvi": rvi
@@ -377,6 +378,8 @@ def main():
             message += f"   Сопротивления вблизи: [{', '.join([f'{x:.2f}' for x in data['resistances']])}]\n"
             message += f"   Рекомендация: {data['signal']}\n"
             message += f"   - {data['interpretation']}\n"
+            if data["rsi_comment"]:
+                message += f"   - {data['rsi_comment']}\n"
             if data["stop_loss"] or data["take_profit"]:
                 sl = f" Стоп: {data['stop_loss']:.2f}" if data["stop_loss"] else ""
                 tp = f" Тейк: {data['take_profit']:.2f}" if data["take_profit"] else ""
