@@ -1,4 +1,4 @@
-name: MOEX Signals Tech Analysis
+name: MOEX Signals Tech Analysis 3-4
 
 on:
   schedule:
@@ -21,7 +21,7 @@ jobs:
         run: |
           pip install pandas numpy scipy requests
 
-      - name: Run signal generator
+      - name: Run signal generator 3-4
         run: python moex_signals_tech_analisys_3-4.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
