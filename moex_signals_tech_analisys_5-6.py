@@ -23,7 +23,7 @@ HOURLY_PATHS = {
 
 RVI_PATH = "data/RVI.csv"
 
-PRICE_DYNAMICS = [1, 5, 10]  # периоды для цены и объёма
+PRICE_DYNAMICS = [1, 5, 10]
 EMA_TREND_WINDOW = 5
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -99,7 +99,7 @@ def check_confirmation_h1(ticker):
     return 30 < current_rsi < 70
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Генерация сигнала (безопасная версия)
+# Генерация сигнала
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 def generate_signal(ticker):
@@ -107,7 +107,6 @@ def generate_signal(ticker):
     current_price = df['close'].iloc[-1]
     current_volume = df['volume'].iloc[-1]
 
-    # RVI и EMA
     try:
         rvi = get_latest_rvi()
     except:
@@ -116,14 +115,12 @@ def generate_signal(ticker):
     df['ema'] = df['close'].ewm(span=ema_span, adjust=False).mean()
     current_ema = df['ema'].iloc[-1]
 
-    # Тренд EMA
     if len(df) >= EMA_TREND_WINDOW + 1:
         ema_prev = df['ema'].iloc[-EMA_TREND_WINDOW]
         ema_trend = "растёт" if current_ema > ema_prev else "падает"
     else:
         ema_trend = "недостаточно данных"
 
-    # Динамика цены
     price_changes = {}
     for days in PRICE_DYNAMICS:
         if len(df) > days:
@@ -133,7 +130,6 @@ def generate_signal(ticker):
         else:
             price_changes[days] = None
 
-    # Динамика объёма (безопасная)
     volume_ratios = {}
     for days in PRICE_DYNAMICS:
         if len(df) > days and days >= 1:
@@ -165,12 +161,23 @@ def generate_signal(ticker):
 
     volume_desc = format_volume_ratios(volume_ratios)
 
-    # Уровни
+    # —————————————————————————————————————
+    # ИЗМЕНЕНО: всегда показываем хотя бы 1 уровень
+    # —————————————————————————————————————
     supports, resistances = find_levels(df)
+
     nearby_supports = [level for level in supports if abs(current_price - level) / current_price < 0.015]
     nearby_resistances = [level for level in resistances if abs(current_price - level) / current_price < 0.015]
 
-    # Сигнал
+    if not nearby_supports and len(supports) > 0:
+        nearest_support = min(supports, key=lambda x: abs(current_price - x))
+        nearby_supports = [nearest_support]
+
+    if not nearby_resistances and len(resistances) > 0:
+        nearest_resistance = min(resistances, key=lambda x: abs(current_price - x))
+        nearby_resistances = [nearest_resistance]
+    # —————————————————————————————————————
+
     signal = "HOLD"
     interpretation = ""
 
@@ -255,14 +262,12 @@ def main():
     from datetime import datetime, timezone
     dt = datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")
     
-    # RVI
     try:
         rvi = get_latest_rvi()
         rvi_msg = f"RVI: {rvi:.1f} (высокая волатильность)" if rvi > 25 else f"RVI: {rvi:.1f}"
     except Exception as e:
         rvi_msg = "RVI: N/A"
 
-    # LQDT динамика
     lqdt_dyn = ""
     try:
         df_lqdt = load_csv(DAILY_PATHS["LQDT"])
