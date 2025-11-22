@@ -1,0 +1,28 @@
+name: MOEX Signals Tech Analysis 5-6
+
+on:
+  schedule:
+    - cron: '15 8 * * *'  # 11:15 MSK
+  workflow_dispatch:
+
+jobs:
+  run-signal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas numpy scipy requests
+
+      - name: Run signal generator 5-6
+        run: python moex_signals_tech_analisys_5-6.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.CHAT_ID }}
