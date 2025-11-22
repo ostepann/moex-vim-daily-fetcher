@@ -1,0 +1,265 @@
+import pandas as pd
+import numpy as np
+from scipy.signal import argrelextrema
+import os
+import requests
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Конфигурация
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
+DAILY_PATHS = {
+    "OBLG": "data/OBLG.csv",
+    "EQMX": "data/EQMX.csv",
+    "GOLD": "data/GOLD.csv",
+}
+
+HOURLY_PATHS = {
+    "OBLG": "data/OBLG_H1_35.CSV",
+    "EQMX": "data/EQMX_H1_35.CSV",
+    "GOLD": "data/GOLD_H1_35.CSV",
+}
+
+RVI_PATH = "data/RVI.csv"
+
+VOLUME_WINDOW = 10
+PRICE_DYNAMICS = [1, 5, 10]  # дни для расчёта динамики
+EMA_TREND_WINDOW = 5        # сколько дней смотрим для тренда EMA
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Загрузка и очистка данных
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
+def load_csv(filepath):
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Файл не найден: {filepath}")
+    df = pd.read_csv(filepath)
+    df.columns = df.columns.str.lower()
+    date_col = None
+    for col in ['tradedate', 'begin']:
+        if col in df.columns:
+            date_col = col
+            break
+    if date_col:
+        df[date_col] = pd.to_datetime(df[date_col])
+        df.set_index(date_col, inplace=True)
+    else:
+        df.index = pd.to_datetime(df.index)
+    df = df.dropna()
+    df = df[df.index.notna()]
+    df.sort_index(inplace=True)
+    return df
+
+def get_latest_rvi():
+    df = load_csv(RVI_PATH)
+    return df['close'].iloc[-1]
+
+def calculate_adaptive_ema_span(rvi_value):
+    if rvi_value > 25:
+        return 20
+    elif rvi_value > 15:
+        return 35
+    else:
+        return 50
+
+def find_levels(data, order=5):
+    if 'high' not in data.columns or 'low' not in data.columns:
+        return np.array([]), np.array([])
+    highs = data['high'].values
+    lows = data['low'].values
+    min_idx = argrelextrema(lows, np.less, order=order)[0]
+    max_idx = argrelextrema(highs, np.greater, order=order)[0]
+    supports = lows[min_idx]
+    resistances = highs[max_idx]
+
+    def group_levels(levels):
+        if len(levels) == 0:
+            return np.array([])
+        rounded = np.round(levels / 0.5) * 0.5
+        counts = pd.Series(rounded).value_counts()
+        strong_levels = counts[counts >= 2].index
+        return strong_levels.values
+
+    return group_levels(supports), group_levels(resistances)
+
+def check_confirmation_h1(ticker):
+    filepath = HOURLY_PATHS[ticker]
+    if not os.path.exists(filepath):
+        return True
+    df_h1 = load_csv(filepath)
+    if 'close' not in df_h1.columns:
+        return True
+    df_h1.sort_index(inplace=True)
+    delta = df_h1['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    rsi_h1 = 100 - (100 / (1 + rs))
+    current_rsi = rsi_h1.iloc[-1]
+    return 30 < current_rsi < 70
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Генерация сигнала с динамикой и интерпретацией (Дни 5–6)
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
+def generate_signal(ticker):
+    df = load_csv(DAILY_PATHS[ticker])
+    current_price = df['close'].iloc[-1]
+    current_volume = df['volume'].iloc[-1]
+
+    # --- RVI и EMA ---
+    try:
+        rvi = get_latest_rvi()
+    except:
+        rvi = float('nan')
+    ema_span = calculate_adaptive_ema_span(rvi) if not pd.isna(rvi) else 50
+    df['ema'] = df['close'].ewm(span=ema_span, adjust=False).mean()
+    current_ema = df['ema'].iloc[-1]
+
+    # --- Тренд EMA ---
+    if len(df) >= EMA_TREND_WINDOW + 1:
+        ema_prev = df['ema'].iloc[-EMA_TREND_WINDOW]
+        ema_trend = "растёт" if current_ema > ema_prev else "падает"
+    else:
+        ema_trend = "недостаточно данных"
+
+    # --- Динамика цены ---
+    price_changes = {}
+    for days in PRICE_DYNAMICS:
+        if len(df) > days:
+            past_price = df['close'].iloc[-(days + 1)]
+            change_pct = (current_price - past_price) / past_price * 100
+            price_changes[days] = change_pct
+        else:
+            price_changes[days] = None
+
+    # --- Объём ---
+    if len(df) >= VOLUME_WINDOW:
+        avg_volume = df['volume'].tail(VOLUME_WINDOW).mean()
+        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+    else:
+        volume_ratio = 1.0
+
+    volume_desc = (
+        f"{volume_ratio:.1f}x от среднего за {VOLUME_WINDOW} дней"
+    )
+
+    # --- Уровни ---
+    supports, resistances = find_levels(df)
+    nearby_supports = [level for level in supports if abs(current_price - level) / current_price < 0.015]
+    nearby_resistances = [level for level in resistances if abs(current_price - level) / current_price < 0.015]
+
+    # --- Сигнал и интерпретация ---
+    signal = "HOLD"
+    interpretation = ""
+
+    # Интерпретация динамики
+    if price_changes[1] is not None and price_changes[5] is not None:
+        short_trend = "рост" if price_changes[1] > 0 else "падение"
+        mid_trend = "восходящий" if price_changes[5] > 0 else "нисходящий"
+    else:
+        short_trend = mid_trend = "недостаточно данных"
+
+    # Правила интерпретации
+    if nearby_supports and volume_ratio > 1.5 and check_confirmation_h1(ticker):
+        interpretation = f"Цена у поддержки, объём высокий → возможен отскок ({short_trend})"
+        if current_price > current_ema:
+            signal = "BUY"
+    elif nearby_resistances and volume_ratio > 1.5 and check_confirmation_h1(ticker):
+        interpretation = f"Цена у сопротивления, объём высокий → возможен разворот ({short_trend})"
+        if current_price < current_ema:
+            signal = "SELL"
+    elif volume_ratio > 1.8 and current_price > current_ema and price_changes[5] and price_changes[5] > 0:
+        interpretation = "Сильный восходящий тренд + высокий объём → продолжение роста"
+        signal = "BUY"
+    else:
+        interpretation = "Нет чёткого сигнала"
+
+    return {
+        "ticker": ticker,
+        "price": current_price,
+        "price_changes": price_changes,
+        "ema_span": ema_span,
+        "ema_value": current_ema,
+        "ema_trend": ema_trend,
+        "volume_desc": volume_desc,
+        "supports": sorted(nearby_supports),
+        "resistances": sorted(nearby_resistances),
+        "signal": signal,
+        "interpretation": interpretation,
+        "rvi": rvi
+    }
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Отправка в Telegram
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
+def send_telegram(message):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        print("❌ TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы.")
+        return
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+    try:
+        response = requests.post(url, data=payload)
+        if response.status_code == 200:
+            print("✅ Сигнал отправлен в Telegram")
+        else:
+            print(f"❌ Ошибка Telegram: {response.text}")
+    except Exception as e:
+        print(f"❌ Ошибка отправки: {e}")
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Основная функция
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
+def format_price_changes(changes):
+    parts = []
+    for days in [1, 5, 10]:
+        if changes[days] is not None:
+            sign = "+" if changes[days] >= 0 else ""
+            parts.append(f"{sign}{changes[days]:.1f}% за {days} дн")
+    return ", ".join(parts) if parts else "недостаточно данных"
+
+def main():
+    from datetime import datetime, timezone
+    dt = datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")
+    
+    # RVI
+    try:
+        rvi = get_latest_rvi()
+        rvi_msg = f"RVI: {rvi:.1f} (высокая волатильность)" if rvi > 25 else f"RVI: {rvi:.1f}"
+    except:
+        rvi_msg = "RVI: N/A"
+
+    message = f"📊 *Сигналы на {dt} (MSK)*\n{rvi_msg}\n\n"
+
+    for ticker in ["OBLG", "EQMX", "GOLD"]:
+        try:
+            data = generate_signal(ticker)
+            emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(data["signal"], "⚪")
+            price_changes_str = format_price_changes(data["price_changes"])
+            message += f"{emoji} *{ticker}*\n"
+            message += f"   Цена: {data['price']:.2f} ({price_changes_str})\n"
+            message += f"   EMA({data['ema_span']}): {data['ema_value']:.2f} ({data['ema_trend']})\n"
+            message += f"   Объём: {data['volume_desc']}\n"
+            if data["supports"]:
+                message += f"   Поддержки вблизи: [{', '.join([f'{x:.2f}' for x in data['supports']])}]\n"
+            else:
+                message += f"   Поддержки вблизи: []\n"
+            if data["resistances"]:
+                message += f"   Сопротивления вблизи: [{', '.join([f'{x:.2f}' for x in data['resistances']])}]\n"
+            else:
+                message += f"   Сопротивления вблизи: []\n"
+            message += f"   Рекомендация: {data['signal']}\n"
+            message += f"   - {data['interpretation']}\n"
+            message += "\n"
+        except Exception as e:
+            message += f"🔴 {ticker}: ERROR ({str(e)})\n\n"
+
+    send_telegram(message.strip())
+
+if __name__ == "__main__":
+    main()
