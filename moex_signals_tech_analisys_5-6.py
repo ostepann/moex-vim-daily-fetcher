@@ -25,6 +25,7 @@ RVI_PATH = "data/RVI.csv"
 
 PRICE_DYNAMICS = [1, 5, 10]
 EMA_TREND_WINDOW = 5
+MAX_STOP_DISTANCE = 0.03  # Максимум 3% от цены (можно увеличить до 0.05 = 5%)
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 # Загрузка и очистка данных
@@ -99,7 +100,7 @@ def check_confirmation_h1(ticker):
     return 30 < current_rsi < 70
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Генерация сигнала (ИСПРАВЛЕНО: стопы/тейки + уровни)
+# Генерация сигнала (с ограничением стопа)
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 def generate_signal(ticker):
@@ -161,23 +162,20 @@ def generate_signal(ticker):
 
     volume_desc = format_volume_ratios(volume_ratios)
 
-    # НАХОДИМ УРОВНИ
+    # Уровни
     supports_all, resistances_all = find_levels(df)
-
-    # Чёткое разделение: поддержки < цены, сопротивления > цены
     supports_below = [s for s in supports_all if s < current_price]
     resistances_above = [r for r in resistances_all if r > current_price]
 
-    # Для отображения (вблизи ±1.5% ИЛИ ближайший)
     supports_near = [s for s in supports_below if (current_price - s) / current_price < 0.015]
     resistances_near = [r for r in resistances_above if (r - current_price) / current_price < 0.015]
 
     if not supports_near and supports_below:
-        nearest_support = max(supports_below)  # ближайшая снизу
+        nearest_support = max(supports_below)
         supports_near = [nearest_support]
 
     if not resistances_near and resistances_above:
-        nearest_resistance = min(resistances_above)  # ближайшее сверху
+        nearest_resistance = min(resistances_above)
         resistances_near = [nearest_resistance]
 
     h1_confirmed = check_confirmation_h1(ticker)
@@ -188,7 +186,7 @@ def generate_signal(ticker):
     take_profit = None
 
     # —————————————————————————————————————————————————————————————
-    # ПРАВИЛА С ИСПРАВЛЕННЫМИ СТОПАМИ/ТЕЙКАМИ
+    # ПРАВИЛА С ОГРАНИЧЕННЫМ СТОПОМ
     # —————————————————————————————————————————————————————————————
 
     # 1. Сильный тренд + объём
@@ -197,14 +195,21 @@ def generate_signal(ticker):
         signal = "BUY"
         interpretation = "Сильный восходящий тренд + высокий объём → продолжение роста"
         
-        # Тейк: ближайшее сопротивление выше цены
         take_profit = resistances_above[0] if resistances_above else current_price * 1.02
-        
-        # Стоп: ближайшая поддержка ниже цены, или EMA
+
+        # Стоп: приоритет — поддержка, потом EMA, потом % от цены
+        stop_candidate = None
         if supports_below:
-            stop_loss = supports_below[-1] * 0.995  # самая высокая поддержка
-        else:
-            stop_loss = min(current_ema * 0.99, current_price * 0.985)
+            # Берём поддержки не далее 5% от цены
+            recent_supports = [s for s in supports_below if (current_price - s) / current_price <= 0.05]
+            if recent_supports:
+                stop_candidate = max(recent_supports) * 0.995
+        if stop_candidate is None:
+            stop_candidate = current_ema * 0.99
+        if stop_candidate is None:
+            stop_candidate = current_price * (1 - MAX_STOP_DISTANCE)
+
+        stop_loss = stop_candidate
 
     # 2. Коррекция в тренде
     elif (ema_trend == "растёт" and current_price > current_ema and 
@@ -253,11 +258,20 @@ def generate_signal(ticker):
         signal = "HOLD"
         interpretation = "Сильный нисходящий тренд. Избегать лонгов."
 
-    # Гарантия: стоп < цена < тейк для BUY
+    # —————————————————————————————————————————————————————————————
+    # ФИНАЛЬНЫЕ ГАРАНТИИ
+    # —————————————————————————————————————————————————————————————
+
     if signal == "BUY":
-        if stop_loss and stop_loss >= current_price:
-            stop_loss = min(current_ema * 0.99, current_price * 0.985)
-        if take_profit and take_profit <= current_price:
+        # Стоп должен быть ниже цены и не дальше MAX_STOP_DISTANCE
+        max_stop = current_price * (1 - MAX_STOP_DISTANCE)
+        if stop_loss is None or stop_loss >= current_price:
+            stop_loss = max_stop
+        elif stop_loss < max_stop:
+            stop_loss = max_stop  # не уходим слишком далеко
+
+        # Тейк должен быть выше цены
+        if take_profit is None or take_profit <= current_price:
             take_profit = current_price * 1.015
 
     # Округление
