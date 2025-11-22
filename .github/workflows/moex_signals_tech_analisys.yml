@@ -22,7 +22,7 @@ jobs:
           pip install pandas numpy scipy requests
 
       - name: Run signal generator
-        run: python moex_signals_tech_analisys.py
+        run: python moex_signals_tech_analisys_3-4.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.CHAT_ID }}
