@@ -12,6 +12,7 @@ DAILY_PATHS = {
     "OBLG": "data/OBLG.csv",
     "EQMX": "data/EQMX.csv",
     "GOLD": "data/GOLD.csv",
+    "LQDT": "data/LQDT.csv",
 }
 
 HOURLY_PATHS = {
@@ -23,8 +24,8 @@ HOURLY_PATHS = {
 RVI_PATH = "data/RVI.csv"
 
 VOLUME_WINDOW = 10
-PRICE_DYNAMICS = [1, 5, 10]  # дни для расчёта динамики
-EMA_TREND_WINDOW = 5        # сколько дней смотрим для тренда EMA
+PRICE_DYNAMICS = [1, 5, 10]
+EMA_TREND_WINDOW = 5
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 # Загрузка и очистка данных
@@ -99,7 +100,7 @@ def check_confirmation_h1(ticker):
     return 30 < current_rsi < 70
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Генерация сигнала с динамикой и интерпретацией (Дни 5–6)
+# Генерация сигнала
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 def generate_signal(ticker):
@@ -107,7 +108,6 @@ def generate_signal(ticker):
     current_price = df['close'].iloc[-1]
     current_volume = df['volume'].iloc[-1]
 
-    # --- RVI и EMA ---
     try:
         rvi = get_latest_rvi()
     except:
@@ -116,14 +116,12 @@ def generate_signal(ticker):
     df['ema'] = df['close'].ewm(span=ema_span, adjust=False).mean()
     current_ema = df['ema'].iloc[-1]
 
-    # --- Тренд EMA ---
     if len(df) >= EMA_TREND_WINDOW + 1:
         ema_prev = df['ema'].iloc[-EMA_TREND_WINDOW]
         ema_trend = "растёт" if current_ema > ema_prev else "падает"
     else:
         ema_trend = "недостаточно данных"
 
-    # --- Динамика цены ---
     price_changes = {}
     for days in PRICE_DYNAMICS:
         if len(df) > days:
@@ -133,34 +131,26 @@ def generate_signal(ticker):
         else:
             price_changes[days] = None
 
-    # --- Объём ---
     if len(df) >= VOLUME_WINDOW:
         avg_volume = df['volume'].tail(VOLUME_WINDOW).mean()
         volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
     else:
         volume_ratio = 1.0
 
-    volume_desc = (
-        f"{volume_ratio:.1f}x от среднего за {VOLUME_WINDOW} дней"
-    )
+    volume_desc = f"{volume_ratio:.1f}x от среднего за {VOLUME_WINDOW} дней"
 
-    # --- Уровни ---
     supports, resistances = find_levels(df)
     nearby_supports = [level for level in supports if abs(current_price - level) / current_price < 0.015]
     nearby_resistances = [level for level in resistances if abs(current_price - level) / current_price < 0.015]
 
-    # --- Сигнал и интерпретация ---
     signal = "HOLD"
     interpretation = ""
 
-    # Интерпретация динамики
     if price_changes[1] is not None and price_changes[5] is not None:
         short_trend = "рост" if price_changes[1] > 0 else "падение"
-        mid_trend = "восходящий" if price_changes[5] > 0 else "нисходящий"
     else:
-        short_trend = mid_trend = "недостаточно данных"
+        short_trend = "недостаточно данных"
 
-    # Правила интерпретации
     if nearby_supports and volume_ratio > 1.5 and check_confirmation_h1(ticker):
         interpretation = f"Цена у поддержки, объём высокий → возможен отскок ({short_trend})"
         if current_price > current_ema:
@@ -191,6 +181,18 @@ def generate_signal(ticker):
     }
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Вспомогательная функция форматирования
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+
+def format_price_changes(changes):
+    parts = []
+    for days in [1, 5, 10]:
+        if changes[days] is not None:
+            sign = "+" if changes[days] >= 0 else ""
+            parts.append(f"{sign}{changes[days]:.1f}% за {days} дн")
+    return ", ".join(parts) if parts else "недостаточно данных"
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
 # Отправка в Telegram
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -215,26 +217,33 @@ def send_telegram(message):
 # Основная функция
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
-def format_price_changes(changes):
-    parts = []
-    for days in [1, 5, 10]:
-        if changes[days] is not None:
-            sign = "+" if changes[days] >= 0 else ""
-            parts.append(f"{sign}{changes[days]:.1f}% за {days} дн")
-    return ", ".join(parts) if parts else "недостаточно данных"
-
 def main():
     from datetime import datetime, timezone
     dt = datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")
     
-    # RVI
     try:
         rvi = get_latest_rvi()
         rvi_msg = f"RVI: {rvi:.1f} (высокая волатильность)" if rvi > 25 else f"RVI: {rvi:.1f}"
     except:
         rvi_msg = "RVI: N/A"
 
-    message = f"📊 *Сигналы на {dt} (MSK)*\n{rvi_msg}\n\n"
+    # --- Динамика LQDT ---
+    lqdt_dyn = ""
+    try:
+        df_lqdt = load_csv(DAILY_PATHS["LQDT"])
+        current = df_lqdt['close'].iloc[-1]
+        changes = {}
+        for days in [1, 5, 10]:
+            if len(df_lqdt) > days:
+                past = df_lqdt['close'].iloc[-(days + 1)]
+                changes[days] = (current - past) / past * 100
+            else:
+                changes[days] = None
+        lqdt_dyn = f"   LQDT: {current:.2f} ({format_price_changes(changes)})\n"
+    except Exception as e:
+        lqdt_dyn = "   LQDT: недоступен\n"
+
+    message = f"📊 *Сигналы на {dt} (MSK)*\n{rvi_msg}\n{lqdt_dyn}\n"
 
     for ticker in ["OBLG", "EQMX", "GOLD"]:
         try:
@@ -245,14 +254,8 @@ def main():
             message += f"   Цена: {data['price']:.2f} ({price_changes_str})\n"
             message += f"   EMA({data['ema_span']}): {data['ema_value']:.2f} ({data['ema_trend']})\n"
             message += f"   Объём: {data['volume_desc']}\n"
-            if data["supports"]:
-                message += f"   Поддержки вблизи: [{', '.join([f'{x:.2f}' for x in data['supports']])}]\n"
-            else:
-                message += f"   Поддержки вблизи: []\n"
-            if data["resistances"]:
-                message += f"   Сопротивления вблизи: [{', '.join([f'{x:.2f}' for x in data['resistances']])}]\n"
-            else:
-                message += f"   Сопротивления вблизи: []\n"
+            message += f"   Поддержки вблизи: [{', '.join([f'{x:.2f}' for x in data['supports']])}]\n"
+            message += f"   Сопротивления вблизи: [{', '.join([f'{x:.2f}' for x in data['resistances']])}]\n"
             message += f"   Рекомендация: {data['signal']}\n"
             message += f"   - {data['interpretation']}\n"
             message += "\n"
