@@ -23,8 +23,7 @@ HOURLY_PATHS = {
 
 RVI_PATH = "data/RVI.csv"
 
-VOLUME_WINDOW = 10
-PRICE_DYNAMICS = [1, 5, 10]
+PRICE_DYNAMICS = [1, 5, 10]  # периоды для цены и объёма
 EMA_TREND_WINDOW = 5
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -100,7 +99,7 @@ def check_confirmation_h1(ticker):
     return 30 < current_rsi < 70
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Генерация сигнала
+# Генерация сигнала (безопасная версия)
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 def generate_signal(ticker):
@@ -108,6 +107,7 @@ def generate_signal(ticker):
     current_price = df['close'].iloc[-1]
     current_volume = df['volume'].iloc[-1]
 
+    # RVI и EMA
     try:
         rvi = get_latest_rvi()
     except:
@@ -116,12 +116,14 @@ def generate_signal(ticker):
     df['ema'] = df['close'].ewm(span=ema_span, adjust=False).mean()
     current_ema = df['ema'].iloc[-1]
 
+    # Тренд EMA
     if len(df) >= EMA_TREND_WINDOW + 1:
         ema_prev = df['ema'].iloc[-EMA_TREND_WINDOW]
         ema_trend = "растёт" if current_ema > ema_prev else "падает"
     else:
         ema_trend = "недостаточно данных"
 
+    # Динамика цены
     price_changes = {}
     for days in PRICE_DYNAMICS:
         if len(df) > days:
@@ -131,18 +133,44 @@ def generate_signal(ticker):
         else:
             price_changes[days] = None
 
-    if len(df) >= VOLUME_WINDOW:
-        avg_volume = df['volume'].tail(VOLUME_WINDOW).mean()
-        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
-    else:
-        volume_ratio = 1.0
+    # Динамика объёма (безопасная)
+    volume_ratios = {}
+    for days in PRICE_DYNAMICS:
+        if len(df) > days and days >= 1:
+            start_idx = -(days + 1)
+            end_idx = -1
+            if start_idx < -len(df):
+                start_idx = 0
+            vol_slice = df['volume'].iloc[start_idx:end_idx]
+            if len(vol_slice) > 0:
+                avg_vol = vol_slice.mean()
+                if avg_vol > 0:
+                    ratio = current_volume / avg_vol
+                    volume_ratios[days] = ratio
+                else:
+                    volume_ratios[days] = 1.0
+            else:
+                volume_ratios[days] = 1.0
+        else:
+            volume_ratios[days] = 1.0
 
-    volume_desc = f"{volume_ratio:.1f}x от среднего за {VOLUME_WINDOW} дней"
+    def format_volume_ratios(ratios):
+        parts = []
+        for days in [1, 5, 10]:
+            val = ratios.get(days, 1.0)
+            if pd.isna(val) or val is None or not isinstance(val, (int, float)):
+                val = 1.0
+            parts.append(f"{val:.1f}x за {days} дн")
+        return ", ".join(parts)
 
+    volume_desc = format_volume_ratios(volume_ratios)
+
+    # Уровни
     supports, resistances = find_levels(df)
     nearby_supports = [level for level in supports if abs(current_price - level) / current_price < 0.015]
     nearby_resistances = [level for level in resistances if abs(current_price - level) / current_price < 0.015]
 
+    # Сигнал
     signal = "HOLD"
     interpretation = ""
 
@@ -151,15 +179,18 @@ def generate_signal(ticker):
     else:
         short_trend = "недостаточно данных"
 
-    if nearby_supports and volume_ratio > 1.5 and check_confirmation_h1(ticker):
+    vol_5d = volume_ratios.get(5, 1.0)
+    vol_ok = isinstance(vol_5d, (int, float)) and not pd.isna(vol_5d) and vol_5d > 1.5
+
+    if nearby_supports and vol_ok and check_confirmation_h1(ticker):
         interpretation = f"Цена у поддержки, объём высокий → возможен отскок ({short_trend})"
         if current_price > current_ema:
             signal = "BUY"
-    elif nearby_resistances and volume_ratio > 1.5 and check_confirmation_h1(ticker):
+    elif nearby_resistances and vol_ok and check_confirmation_h1(ticker):
         interpretation = f"Цена у сопротивления, объём высокий → возможен разворот ({short_trend})"
         if current_price < current_ema:
             signal = "SELL"
-    elif volume_ratio > 1.8 and current_price > current_ema and price_changes[5] and price_changes[5] > 0:
+    elif vol_ok and current_price > current_ema and price_changes[5] and price_changes[5] > 0:
         interpretation = "Сильный восходящий тренд + высокий объём → продолжение роста"
         signal = "BUY"
     else:
@@ -181,16 +212,19 @@ def generate_signal(ticker):
     }
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Вспомогательная функция форматирования
+# Вспомогательные функции
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
 def format_price_changes(changes):
     parts = []
     for days in [1, 5, 10]:
-        if changes[days] is not None:
-            sign = "+" if changes[days] >= 0 else ""
-            parts.append(f"{sign}{changes[days]:.1f}% за {days} дн")
-    return ", ".join(parts) if parts else "недостаточно данных"
+        val = changes.get(days, None)
+        if val is not None and isinstance(val, (int, float)) and not pd.isna(val):
+            sign = "+" if val >= 0 else ""
+            parts.append(f"{sign}{val:.1f}% за {days} дн")
+        else:
+            parts.append(f"N/A за {days} дн")
+    return ", ".join(parts)
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 # Отправка в Telegram
@@ -221,19 +255,20 @@ def main():
     from datetime import datetime, timezone
     dt = datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")
     
+    # RVI
     try:
         rvi = get_latest_rvi()
         rvi_msg = f"RVI: {rvi:.1f} (высокая волатильность)" if rvi > 25 else f"RVI: {rvi:.1f}"
-    except:
+    except Exception as e:
         rvi_msg = "RVI: N/A"
 
-    # --- Динамика LQDT ---
+    # LQDT динамика
     lqdt_dyn = ""
     try:
         df_lqdt = load_csv(DAILY_PATHS["LQDT"])
         current = df_lqdt['close'].iloc[-1]
         changes = {}
-        for days in [1, 5, 10]:
+        for days in PRICE_DYNAMICS:
             if len(df_lqdt) > days:
                 past = df_lqdt['close'].iloc[-(days + 1)]
                 changes[days] = (current - past) / past * 100
