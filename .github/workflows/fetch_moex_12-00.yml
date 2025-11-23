@@ -2,14 +2,9 @@ name: Fetch MOEX 12:00 Hourly Candles
 
 on:
   schedule:
-    # Запуск каждый день в 13:00 MSK (10:00 UTC)
-    - cron: '0 10 * * *'
-  workflow_dispatch:  # Позволяет запустить вручную
+    - cron: '0 10 * * *'  # 13:00 MSK
+  workflow_dispatch:
 
-# Добавьте этот блок для предоставления прав на запись
-permissions:
-  contents: write
-  
 jobs:
   fetch-data:
     runs-on: ubuntu-latest
@@ -17,9 +12,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-        # Явно передаем токен с правами на запись
           token: ${{ secrets.GITHUB_TOKEN }}
-        
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -31,3 +25,10 @@ jobs:
 
       - name: Run MOEX 12:00 data fetcher
         run: python fetch_moex_12-00.py
+
+      - name: Commit and push new data
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update 12:00 hourly candles" && git push)
