@@ -410,6 +410,35 @@ def main():
             reason = "ТА не подтверждает вход" if ta_result else "Ошибка расчёта ТА"
             message += f"   - {best_ticker}: лучший по momentum, но {reason}\n"
 
+    # —————————————————————————————————————
+    # Подробный анализ всех активов
+    # —————————————————————————————————————
+    message += "\n🔍 *Подробный анализ всех активов:*\n\n"
+
+    for ticker in ["OBLG", "EQMX", "GOLD"]:
+        try:
+            ta_data = generate_ta_signal(ticker)
+            emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(ta_data["signal"], "⚪")
+            price_changes_str = format_price_changes(ta_data["price_changes"])
+            message += f"{emoji} *{ticker}*\n"
+            message += f"   Цена: {ta_data['price']:.2f} ({price_changes_str})\n"
+            message += f"   EMA({ta_data['ema_span']}): {ta_data['ema_value']:.2f} ({ta_data['ema_trend']})\n"
+            message += f"   Объём: {ta_data['volume_desc']}\n"
+            message += f"   Поддержки вблизи: [{', '.join([f'{x:.2f}' for x in ta_data['supports']])}]\n"
+            message += f"   Сопротивления вблизи: [{', '.join([f'{x:.2f}' for x in ta_data['resistances']])}]\n"
+            message += f"   Рекомендация: {ta_data['signal']}\n"
+            message += f"   - {ta_data['interpretation']}\n"
+            if ta_data["rsi_comment"]:
+                message += f"   - {ta_data['rsi_comment']}\n"
+            if ta_data["stop_loss"] or ta_data["take_profit"]:
+                sl = f" Стоп: {ta_data['stop_loss']:.2f}" if ta_data["stop_loss"] else ""
+                tp = f" Тейк: {ta_data['take_profit']:.2f}" if ta_data["take_profit"] else ""
+                message += f"   →{sl}{tp}\n"
+            message += "\n"
+        except Exception as e:
+            message += f"🔴 {ticker}: ERROR ({str(e)})\n\n"
+
+    
     # Отправка
     send_telegram(message.strip())
 
