@@ -16,7 +16,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        with:
+        # Явно передаем токен с правами на запись
+          token: ${{ secrets.GITHUB_TOKEN }}
+        
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
