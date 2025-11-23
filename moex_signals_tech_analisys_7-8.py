@@ -353,7 +353,7 @@ def main():
 
     # Формируем строку momentum
     mom_lines = []
-    for ticker in ["OBLG", "EQMX", "GOLD"]:
+    for ticker in ["OBLG", "EQMX", "GOLD", "LQDT"]:
         mom = momentum_data[ticker]
         parts = []
         for days in MOMENTUM_PERIODS:
