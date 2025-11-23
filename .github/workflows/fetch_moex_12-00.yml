@@ -1,0 +1,26 @@
+name: Fetch MOEX 12:00 Hourly Candles
+
+on:
+  schedule:
+    # Запуск каждый день в 13:00 MSK (10:00 UTC)
+    - cron: '0 10 * * *'
+  workflow_dispatch:  # Позволяет запустить вручную
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests
+
+      - name: Run MOEX 12:00 data fetcher
+        run: python fetch_moex_12-00.py
