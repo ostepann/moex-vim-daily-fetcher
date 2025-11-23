@@ -18,7 +18,7 @@ INSTRUMENTS = {
 
 INTERVAL = 60  # 1 час
 START_DATE = "2023-01-01T00:00:00"
-END_DATE = "2023-01-31T23:59:59"  # Только январь 2023 для отладки
+END_DATE = "2025-11-23T23:59:59"  # Только январь 2023 для отладки
 BASE_URL = "https://iss.moex.com/iss/engines/stock/markets/shares/securities"
 DATA_DIR = "data"
 
