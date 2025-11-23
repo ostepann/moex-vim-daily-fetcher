@@ -30,9 +30,22 @@ EMA_TREND_WINDOW = 5
 MAX_STOP_DISTANCE = 0.03
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
-# Вспомогательные индикаторы
+# Вспомогательные функции
 # —————————————————————————————————————————————————————————————————————————————————————————————————————
 
+def format_price_changes(changes):
+    parts = []
+    for days in [1, 5, 10]:
+        val = changes.get(days, None)
+        if val is not None and isinstance(val, (int, float)) and not pd.isna(val):
+            sign = "+" if val >= 0 else ""
+            parts.append(f"{sign}{val:.1f}% за {days} дн")
+        else:
+            parts.append(f"N/A за {days} дн")
+    return ", ".join(parts)
+# —————————————————————————————————————————————————————————————————————————————————————————————————————
+# Вспомогательные индикаторы
+# —————————————————————————————————————————————————————————————————————————————————————————————————————    
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
