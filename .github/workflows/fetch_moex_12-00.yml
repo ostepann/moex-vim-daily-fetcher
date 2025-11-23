@@ -5,6 +5,10 @@ on:
     - cron: '0 10 * * *'  # 13:00 MSK
   workflow_dispatch:
 
+# Добавьте этот блок для предоставления прав на запись
+permissions:
+  contents: write
+  
 jobs:
   fetch-data:
     runs-on: ubuntu-latest
