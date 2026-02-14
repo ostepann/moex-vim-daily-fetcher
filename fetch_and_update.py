@@ -5,12 +5,14 @@ import os
 from datetime import datetime
 import time
 
+# Словарь тикеров: тикер -> (дата_начала, тип_актива, борд)
 TICKERS = {
-    "LQDT": ("2022-01-01", "fund"),
-    "GOLD": ("2022-07-01", "fund"),  # ✅ Корректный тикер золота
-    "OBLG": ("2022-12-09", "fund"),
-    "EQMX": ("2022-01-01", "fund"),
-    "RVI":  ("2022-01-01", "index")
+    "LQDT":  ("2022-01-01", "fund", "TQTF"),
+    "GOLD":  ("2022-07-01", "fund", "TQTF"),  # ✅ Корректный тикер золота
+    "OBLG":  ("2022-12-09", "fund", "TQTF"),
+    "EQMX":  ("2022-01-01", "fund", "TQTF"),
+    "RVI":   ("2022-01-01", "index", "RTSI"),
+    "IMOEX": ("2022-01-01", "index", "SNDX")  # ✅ Добавлен индекс МосБиржи
 }
 
 DATA_DIR = "data"
@@ -19,14 +21,15 @@ os.makedirs(DATA_DIR, exist_ok=True)
 MAX_RETRIES = 5
 RETRY_DELAY = 5
 
-def fetch_moex_history_paginated(ticker, date_from, date_till, asset_type="fund"):
+def fetch_moex_history_paginated(ticker, date_from, date_till, asset_type="fund", board="TQTF"):
     all_rows = []
     start = 0
 
+    # Формируем URL в зависимости от типа актива
     if asset_type == "index":
-        base_url = f"https://iss.moex.com/iss/history/engines/stock/markets/index/boards/RTSI/securities/{ticker}.xml"
+        base_url = f"https://iss.moex.com/iss/history/engines/stock/markets/index/boards/{board}/securities/{ticker}.xml"
     else:
-        base_url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQTF/securities/{ticker}.xml"
+        base_url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/{board}/securities/{ticker}.xml"
 
     while True:
         url = f"{base_url}?from={date_from}&till={date_till}&start={start}"
@@ -68,18 +71,25 @@ def fetch_moex_history_paginated(ticker, date_from, date_till, asset_type="fund"
     
     df = pd.DataFrame(all_rows)
     required_cols = ["TRADEDATE", "OPEN", "HIGH", "LOW", "CLOSE"]
+    
+    # Добавляем VOLUME если есть, иначе заполняем нулями
     if "VOLUME" in df.columns:
         cols = required_cols + ["VOLUME"]
     else:
         cols = required_cols
         df["VOLUME"] = 0
+    
+    # Обрабатываем пустые значения в числовых полях
+    for col in ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     df = df[cols]
     df['TRADEDATE'] = pd.to_datetime(df['TRADEDATE'])
     return df
 
 
-def update_ticker(ticker, start_date, asset_type):
+def update_ticker(ticker, start_date, asset_type, board):
     file_path = os.path.join(DATA_DIR, f"{ticker}.csv")
 
     if os.path.exists(file_path):
@@ -92,7 +102,7 @@ def update_ticker(ticker, start_date, asset_type):
         last_date = start_date
 
     today = datetime.today().strftime("%Y-%m-%d")
-    df_new = fetch_moex_history_paginated(ticker, last_date, today, asset_type)
+    df_new = fetch_moex_history_paginated(ticker, last_date, today, asset_type, board)
 
     if df_new.empty:
         print(f"⚠ Нет новых данных для {ticker}")
@@ -108,6 +118,6 @@ def update_ticker(ticker, start_date, asset_type):
 
 
 if __name__ == "__main__":
-    for ticker, (start_date, asset_type) in TICKERS.items():
-        print(f"\n=== Обрабатываем {ticker} ({asset_type}) ===")
-        update_ticker(ticker, start_date, asset_type)
+    for ticker, (start_date, asset_type, board) in TICKERS.items():
+        print(f"\n=== Обрабатываем {ticker} ({asset_type}, board={board}) ===")
+        update_ticker(ticker, start_date, asset_type, board)
