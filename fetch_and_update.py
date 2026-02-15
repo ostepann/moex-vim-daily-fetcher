@@ -13,7 +13,7 @@ TICKERS = {
     "OBLG":  ("2022-12-09", "fund", "TQTF"),
     "EQMX":  ("2022-01-01", "fund", "TQTF"),
     "RVI":   ("2022-01-01", "index", "RTSI"),
-    "IMOEX": ("2020-01-01", "index", "SNDX")  # Индекс МосБиржи
+    "IMOEX": ("2022-01-01", "index", "SNDX")  # Индекс МосБиржи
 }
 
 DATA_DIR = "data"
